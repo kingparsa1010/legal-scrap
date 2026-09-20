@@ -221,3 +221,9 @@ __marimo__/
 output/
 .state/
 .ipm/
+logs/
+*.log
+session_*.json
+temp_*.db
+.cache/
+

@@ -1,0 +1,23 @@
+# ==============================================================================
+# Legal-Scrap: Trademark Monitoring & Scraping System (SSAA)
+# ==============================================================================
+
+# Core Desktop GUI (PyQt6) & Background Worker (QThread)
+PyQt6>=6.6.0
+
+# Direct HTTP Client & HTML Parsing
+requests>=2.31.0
+urllib3>=2.0.0
+beautifulsoup4>=4.12.0
+
+# Similarity & Phonetic Matching Engine
+rapidfuzz>=3.6.0
+
+# Data Export & Calendar Handling
+openpyxl>=3.1.2
+pandas>=2.1.0
+jdatetime>=5.0.0
+
+# Automated Browser Scraping & Word (.docx) Reports (scrape_brands.py)
+playwright>=1.40.0
+python-docx>=1.1.0
