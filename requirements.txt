@@ -18,6 +18,7 @@ openpyxl>=3.1.2
 pandas>=2.1.0
 jdatetime>=5.0.0
 
-# Automated Browser Scraping & Word (.docx) Reports (scrape_brands.py)
-playwright>=1.40.0
+# Native Windows WebView & Word (.docx) Reports
+pywebview>=5.0.0
 python-docx>=1.1.0
+

@@ -15,7 +15,7 @@ from scanner.logger import get_logger
 from scanner.auth import (
     get_authenticated_session, check_session_alive,
     has_saved_session, get_saved_cookies, get_saved_user_name,
-    STORAGE_STATE_FILE, USER_AGENT
+    save_account_data, USER_AGENT
 )
 from scanner.similarity import TrademarkSimilarityEngine
 from scanner.database import (
@@ -129,7 +129,7 @@ def save_store(store: Dict[str, Any], path: str = DATA_STORE_PATH):
 
 class DeclarationScrapeWorker(QThread):
     """
-    نخ پردازشی اجرای استخراج لیست اظهارنامه‌ها بدون مسدودسازی رابط گرافیکی
+    نخ پردازشی اجرای استخراج لیست اظهارنامه‌ها با نشست مستقیم HTTP (بدون Playwright و بدون نیاز به کروم)
     """
     progress_changed = pyqtSignal(int, str)
     record_found = pyqtSignal(dict)
@@ -155,7 +155,7 @@ class DeclarationScrapeWorker(QThread):
 
     def run(self):
         self.progress_changed.emit(5, "بررسی نشست ذخیره‌شده...")
-        logger.info(f"شروع اجرای اسکن اظهارنامه‌ها با حالت: {self.mode}")
+        logger.info(f"شروع اجرای اسکن اظهارنامه‌ها با حالت: {self.mode} (موتور سبک HTTP)")
 
         if not has_saved_session():
             logger.warning("هیچ نشستی در سامانه یافت نشد.")
@@ -166,195 +166,146 @@ class DeclarationScrapeWorker(QThread):
             return
 
         user_name = get_saved_user_name() or "کاربر سامانه"
-        self.progress_changed.emit(8, f"راه‌اندازی نشست برای {user_name}...")
-        logger.info(f"استفاده از نشست ذخیره‌شده برای کاربر: {user_name}")
+        self.progress_changed.emit(8, f"راه‌اندازی ارتباط امن برای {user_name}...")
+        logger.info(f"اتصال مستقیم HTTP با کوکی‌های کاربر: {user_name}")
+
+        session = get_authenticated_session()
+
+        self.progress_changed.emit(12, "در حال اتصال به لیست اظهارنامه‌ها...")
+        logger.info(f"در حال ارسال درخواست به: {START_URL}")
 
         try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            logger.error("کتابخانه playwright نصب نیست.")
-            self.scan_failed.emit("کتابخانه playwright نصب نیست.")
-            return
-
-        try:
-            with sync_playwright() as p:
-                logger.debug("اجرای Chromium در حالت headless=True")
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=["--disable-blink-features=AutomationControlled"]
-                )
-
-                if os.path.exists(STORAGE_STATE_FILE):
-                    logger.info(f"بارگذاری نشست کامل از فایل storage_state: {STORAGE_STATE_FILE}")
-                    context = browser.new_context(
-                        storage_state=STORAGE_STATE_FILE,
-                        viewport={"width": 1280, "height": 800},
-                        user_agent=USER_AGENT
-                    )
-                else:
-                    logger.info("فایل storage_state یافت نشد؛ تزریق کوکی‌های متنی ذخیره‌شده...")
-                    context = browser.new_context(
-                        viewport={"width": 1280, "height": 800},
-                        user_agent=USER_AGENT
-                    )
-                    cookies_data = get_saved_cookies()
-                    if cookies_data:
-                        cookie_list = [
-                            {"name": k, "value": v, "domain": "ipm.ssaa.ir", "path": "/"}
-                            for k, v in cookies_data.items()
-                        ]
-                        context.add_cookies(cookie_list)
-                        logger.debug(f"{len(cookie_list)} کوکی به context تزریق شد.")
-
-                page = context.new_page()
-
-                self.progress_changed.emit(12, "در حال اتصال به لیست اظهارنامه‌ها...")
-                logger.info(f"در حال باز کردن آدرس: {START_URL}")
-                status_code = None
-                try:
-                    resp = page.goto(START_URL, timeout=45000)
-                    status_code = resp.status if resp else None
-                    logger.info(f"پاسخ اولیه سرور: کد وضعیت={status_code}, آدرس نهایی={page.url}, عنوان='{page.title()}'")
-                except Exception as e:
-                    browser.close()
-                    err_text = str(e)
-                    logger.error(f"خطای برقراری ارتباط در page.goto: {e}")
-                    if any(w in err_text for w in ["ERR_CONNECTION_CLOSED", "ERR_TIMED_OUT", "ERR_NAME_NOT_RESOLVED", "SSL", "EOF"]):
-                        self.scan_failed.emit(
-                            "⚠️ خطا در برقراری ارتباط با سامانه ثبت (ipm.ssaa.ir).\n\n"
-                            "علت: سرورهای سازمان ثبت، آی‌پی‌های خارج از کشور و فیلترشکن (VPN) را مسدود می‌کنند (Geo-blocking).\n\n"
-                            "لطفاً فیلترشکن (VPN) خود را خاموش فرمایید و دوباره روی دکمه اسکن کلیک کنید."
-                        )
-                    else:
-                        self.scan_failed.emit(f"خطا در اتصال به سامانه ثبت اسناد: {e}")
-                    return
-
-                # ارزیابی وضعیت ورود
-                user_data_count = page.locator("#userData").count()
-                data_list_count = page.locator("#DataList").count()
-                logger.debug(f"شمارش المان‌های هویتی: #userData={user_data_count}, #DataList={data_list_count}")
-
-                if user_data_count == 0 and data_list_count == 0:
-                    current_url = page.url
-                    page_title = page.title()
-                    logger.warning(f"نشست کاربری تأیید نشد. کد={status_code}, آدرس={current_url}, عنوان={page_title}")
-                    browser.close()
-
-                    if status_code == 500:
-                        self.scan_failed.emit(
-                            "⚠️ سرور ثبت اسناد خطای داخلی ۵۰۰ (Internal Server Error) بازگرداند.\n\n"
-                            "کوکی‌های نشست منقضی یا از سمت سرور باطل شده‌اند.\n"
-                            "لطفاً با کلیک بر روی دکمه «تغییر حساب / ورود به سامانه» مجدداً وارد شوید تا نشست تازه ذخیره گردد."
-                        )
-                    elif "Login" in current_url or "Account" in current_url:
-                        self.scan_failed.emit(
-                            "نشست کاربری شما منقضی شده و سامانه به صفحه ورود هدایت کرد.\n"
-                            "لطفاً با زدن دکمه «تغییر حساب / ورود به سامانه» یک‌بار دیگر وارد شوید تا نشست تازه ذخیره گردد."
-                        )
-                    else:
-                        self.scan_failed.emit(
-                            f"نشست کاربری شما معتبر تشخیص داده نشد (کد وضعیت: {status_code}).\n"
-                            "لطفاً با زدن دکمه «تغییر حساب / ورود به سامانه» یک‌بار دیگر وارد شوید."
-                        )
-                    return
-
-                page_1_html = page.content()
-
-                # استخراج تعداد کل رکوردها
-                match = re.search(r'TotalRecord=(\d+)', page_1_html)
-                if match:
-                    total_records = int(match.group(1))
-                else:
-                    total_records = 1001
-
-                calc_pages = max(1, (total_records + 19) // 20)
-                actual_max_pages = min(self.max_pages, calc_pages)
-                logger.info(f"تعداد کل اظهارنامه‌ها در سامانه: {total_records} (~{calc_pages} صفحه). حداکثر صفحات اسکن: {actual_max_pages}")
-                self.progress_changed.emit(15, f"تعداد کل: {total_records} مورد (~{calc_pages} صفحه)")
-
-                store = load_store(DATA_STORE_PATH)
-                is_first_run = len(store) == 0
-                logger.info(f"تعداد رکوردهای موجود در کش محلی: {len(store)} مورد")
-                watchlist = get_watchlist(DB_FILE)
-
-                newly_scraped = []
-                new_count = 0
-                alerts_count = 0
-
-                page_num = 1
-                while page_num <= actual_max_pages and self._is_running:
-                    if page_num > 1:
-                        url = BASE_LIST_URL.format(total_record=total_records, page=page_num)
-                        try:
-                            logger.debug(f"دریافت صفحه {page_num}: {url}")
-                            page.goto(url, timeout=35000)
-                            html = page.content()
-                        except Exception as e:
-                            logger.error(f"خطا در دریافت صفحه {page_num}: {e}")
-                            break
-                    else:
-                        html = page_1_html
-
-                    rows = parse_declaration_page(html)
-                    if not rows:
-                        logger.warning(f"هیچ ردیفی در صفحه {page_num} یافت نشد. پایان واکشی صفحات.")
-                        break
-
-                    new_on_this_page = 0
-                    for entry in rows:
-                        if not self._is_running:
-                            break
-
-                        dec_id = entry["dec_no_id"]
-
-                        # ارزیابی شباهت با برندهای شرکت
-                        title = entry.get("title", "")
-                        sim_score, matched_brand, risk = self.similarity_engine.evaluate_against_watchlist(title, watchlist)
-                        entry["similarity_score"] = sim_score
-                        entry["matched_brand"] = matched_brand
-                        entry["risk_level"] = risk
-
-                        if risk in ["high", "medium"]:
-                            alerts_count += 1
-                            logger.info(f"هشدار شباهت: '{title}' با برند '{matched_brand}' ({sim_score}%) - سطح: {risk}")
-
-                        if dec_id not in store:
-                            newly_scraped.append(entry)
-                            store[dec_id] = entry
-                            new_on_this_page += 1
-                            new_count += 1
-
-                        # ارسال به جدول زنده رابط کاربری
-                        self.record_found.emit(entry)
-
-                    pct = min(90, int(15 + (page_num / actual_max_pages) * 75))
-                    self.progress_changed.emit(pct, f"صفحه {page_num} از {actual_max_pages} ({new_count} مورد جدید)")
-
-                    # شرط توقف زودهنگام در حالت «فقط موارد جدید»
-                    if self.mode == "new_only" and not is_first_run and new_on_this_page == 0:
-                        logger.info(f"در صفحه {page_num} هیچ رکورد جدیدی یافت نشد. توقف هوشمند اسکن سریع (Incremental Scan).")
-                        self.progress_changed.emit(pct, "به رکوردهای قبلاً ثبت‌شده رسیدیم. توقف اسکن سریع.")
-                        break
-
-                    page_num += 1
-                    time.sleep(0.2)
-
-                browser.close()
-                logger.debug("مرورگر پس‌زمینه با موفقیت بسته شد.")
-
+            resp = session.get(START_URL, timeout=40, verify=False)
+            status_code = resp.status_code
+            logger.info(f"پاسخ دریافت شد: کد={status_code}, آدرس نهایی={resp.url}")
+            html_page_1 = resp.text
         except Exception as e:
-            logger.critical(f"خطای نامنتظره در اجرای اسکن: {e}")
-            self.scan_failed.emit(f"خطای نامنتظره در اجرای اسکن: {e}")
+            err_text = str(e)
+            logger.error(f"خطای شبکه در session.get: {e}")
+            if any(w in err_text for w in ["ERR_CONNECTION_CLOSED", "ERR_TIMED_OUT", "ERR_NAME_NOT_RESOLVED", "SSL", "EOF", "Connection", "Timeout"]):
+                self.scan_failed.emit(
+                    "⚠️ خطا در برقراری ارتباط با سامانه ثبت (ipm.ssaa.ir).\n\n"
+                    "علت: سرورهای سازمان ثبت، آی‌پی‌های خارج از کشور و فیلترشکن (VPN) را مسدود می‌کنند (Geo-blocking).\n\n"
+                    "لطفاً فیلترشکن (VPN) خود را خاموش فرمایید و دوباره روی دکمه اسکن کلیک کنید."
+                )
+            else:
+                self.scan_failed.emit(f"خطا در اتصال به سامانه ثبت اسناد: {e}")
             return
+
+        # بررسی وجود المان‌های جدول و کاربر در HTML
+        soup = BeautifulSoup(html_page_1, "html.parser")
+        user_data = soup.find(id="userData")
+        data_list = soup.find(id="DataList")
+
+        if not user_data and not data_list:
+            logger.warning(f"نشست کاربری تأیید نشد. کد={status_code}, آدرس={resp.url}")
+            if status_code == 500:
+                self.scan_failed.emit(
+                    "⚠️ سرور ثبت اسناد خطای داخلی ۵۰۰ (Internal Server Error) بازگرداند.\n\n"
+                    "کوکی‌های نشست منقضی یا از سمت سرور باطل شده‌اند.\n"
+                    "لطفاً با کلیک بر روی دکمه «تغییر حساب / ورود به سامانه» مجدداً وارد شوید تا نشست تازه ذخیره گردد."
+                )
+            elif "SignIn" in resp.url or "Login" in resp.url or "Account" in resp.url:
+                self.scan_failed.emit(
+                    "نشست کاربری شما منقضی شده و سامانه به صفحه ورود هدایت کرد.\n"
+                    "لطفاً با زدن دکمه «تغییر حساب / ورود به سامانه» یک‌بار دیگر وارد شوید تا نشست تازه ذخیره گردد."
+                )
+            else:
+                self.scan_failed.emit(
+                    f"نشست کاربری شما معتبر تشخیص داده نشد (کد وضعیت: {status_code}).\n"
+                    "لطفاً با زدن دکمه «تغییر حساب / ورود به سامانه» یک‌بار دیگر وارد شوید."
+                )
+            return
+
+        # استخراج تعداد کل رکوردها
+        match = re.search(r'TotalRecord=(\d+)', html_page_1)
+        if match:
+            total_records = int(match.group(1))
+        else:
+            total_records = 1001
+
+        calc_pages = max(1, (total_records + 19) // 20)
+        actual_max_pages = min(self.max_pages, calc_pages)
+        logger.info(f"تعداد کل اظهارنامه‌ها در سامانه: {total_records} (~{calc_pages} صفحه). حداکثر صفحات اسکن: {actual_max_pages}")
+        self.progress_changed.emit(15, f"تعداد کل: {total_records} مورد (~{calc_pages} صفحه)")
+
+        store = load_store(DATA_STORE_PATH)
+        is_first_run = len(store) == 0
+        logger.info(f"تعداد رکوردهای موجود در کش محلی: {len(store)} مورد")
+        watchlist = get_watchlist(DB_FILE)
+
+        newly_scraped = []
+        new_count = 0
+        alerts_count = 0
+
+        page_num = 1
+        while page_num <= actual_max_pages and self._is_running:
+            if page_num > 1:
+                url = BASE_LIST_URL.format(total_record=total_records, page=page_num)
+                try:
+                    logger.debug(f"دریافت صفحه {page_num}: {url}")
+                    p_resp = session.get(url, timeout=30, verify=False)
+                    html = p_resp.text
+                except Exception as e:
+                    logger.error(f"خطا در دریافت صفحه {page_num}: {e}")
+                    break
+            else:
+                html = html_page_1
+
+            rows = parse_declaration_page(html)
+            if not rows:
+                logger.warning(f"هیچ ردیفی در صفحه {page_num} یافت نشد. پایان واکشی صفحات.")
+                break
+
+            new_on_this_page = 0
+            for entry in rows:
+                if not self._is_running:
+                    break
+
+                dec_id = entry["dec_no_id"]
+
+                # ارزیابی شباهت با برندهای شرکت
+                title = entry.get("title", "")
+                sim_score, matched_brand, risk = self.similarity_engine.evaluate_against_watchlist(title, watchlist)
+                entry["similarity_score"] = sim_score
+                entry["matched_brand"] = matched_brand
+                entry["risk_level"] = risk
+
+                if risk in ["high", "medium"]:
+                    alerts_count += 1
+                    logger.info(f"هشدار شباهت: '{title}' با برند '{matched_brand}' ({sim_score}%) - سطح: {risk}")
+
+                if dec_id not in store:
+                    newly_scraped.append(entry)
+                    store[dec_id] = entry
+                    new_on_this_page += 1
+                    new_count += 1
+
+                # ارسال به جدول زنده رابط کاربری
+                self.record_found.emit(entry)
+
+            pct = min(90, int(15 + (page_num / actual_max_pages) * 75))
+            self.progress_changed.emit(pct, f"صفحه {page_num} از {actual_max_pages} ({new_count} مورد جدید)")
+
+            # شرط توقف زودهنگام در حالت «فقط موارد جدید»
+            if self.mode == "new_only" and not is_first_run and new_on_this_page == 0:
+                logger.info(f"در صفحه {page_num} هیچ رکورد جدیدی یافت نشد. توقف هوشمند اسکن سریع.")
+                self.progress_changed.emit(pct, "به رکوردهای قبلاً ثبت‌شده رسیدیم. توقف اسکن سریع.")
+                break
+
+            page_num += 1
+            time.sleep(0.15)
 
         if not self._is_running:
             logger.info("اسکن توسط کاربر متوقف شد.")
             self.progress_changed.emit(0, "اسکن توسط کاربر متوقف شد.")
             return
 
-        # ذخیره در کش محلی JSON
+        # ذخیره در کش محلی ریشه و پوشه اختصاصی حساب کاربر
         save_store(store, DATA_STORE_PATH)
-        logger.info(f"کش محلی رکوردهای پایگاه داده با موفقیت به‌روزرسانی شد ({len(store)} رکورد).")
+        save_account_data(user_name, store, self.docx_path)
+        logger.info(f"کش محلی و پوشه حساب '{user_name}' با {len(store)} رکورد به‌روزرسانی شد.")
+
 
         # ذخیره در پایگاه داده SQLite
         try:

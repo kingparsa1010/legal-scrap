@@ -269,6 +269,24 @@ def detect_system_dark(app: QApplication) -> bool:
         return False
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    """آیتم جدول عددی برای مرتب‌سازی صحیح مقادیر عددی (جلوگیری از قرارگیری ۱۷ بین ۱۶۹ و ۱۷۰)."""
+    def __init__(self, value: int | float, text: str = None):
+        super().__init__(str(value) if text is None else text)
+        self._val = float(value) if value is not None else 0.0
+        self.setData(Qt.ItemDataRole.UserRole, self._val)
+
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            other_data = other.data(Qt.ItemDataRole.UserRole)
+            if other_data is not None:
+                try:
+                    return self._val < float(other_data)
+                except (ValueError, TypeError):
+                    pass
+        return super().__lt__(other)
+
+
 class LoginWorker(QThread):
     """نخ پس‌زمینه اجرای فرآیند ورود به سامانه بدون انجماد رابط کاربری."""
     status_updated = pyqtSignal(str)
@@ -276,10 +294,11 @@ class LoginWorker(QThread):
 
     def run(self):
         success, user_name = perform_browser_login(
-            timeout_seconds=300,
+            timeout_seconds=360,
             on_status_update=lambda msg: self.status_updated.emit(msg)
         )
         self.login_finished.emit(success, user_name)
+
 
 
 class LogViewerDialog(QDialog):
@@ -1323,9 +1342,9 @@ class TrademarkApp(QMainWindow):
         risk_fa = "● شباهت بالا" if risk == 'high' else "● شباهت متوسط"
         bg, fg = self._risk_colors(risk)
 
-        self.table_alerts.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+        self.table_alerts.setItem(row, 0, NumericTableWidgetItem(row + 1))
 
-        item_score = QTableWidgetItem(f"{score:.0f}٪")
+        item_score = NumericTableWidgetItem(score, f"{score:.0f}٪")
         item_score.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         item_score.setBackground(bg)
         item_score.setForeground(fg)
@@ -1351,7 +1370,7 @@ class TrademarkApp(QMainWindow):
         row = self.table_rejected.rowCount()
         self.table_rejected.insertRow(row)
 
-        self.table_rejected.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+        self.table_rejected.setItem(row, 0, NumericTableWidgetItem(row + 1))
         self.table_rejected.setItem(row, 1, QTableWidgetItem(r.get('title', '')))
         self.table_rejected.setItem(row, 2, QTableWidgetItem(r.get('declaration_no', '')))
         self.table_rejected.setItem(row, 3, QTableWidgetItem(r.get('declaration_date', '')))
@@ -1375,7 +1394,7 @@ class TrademarkApp(QMainWindow):
         is_rej = r.get('is_rejected')
         rej_fa = "رد شده" if is_rej else "فعال"
 
-        self.table_all.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+        self.table_all.setItem(row, 0, NumericTableWidgetItem(row + 1))
         self.table_all.setItem(row, 1, QTableWidgetItem(r.get('title', '')))
         self.table_all.setItem(row, 2, QTableWidgetItem(r.get('declaration_no', '')))
         self.table_all.setItem(row, 3, QTableWidgetItem(r.get('declaration_date', '')))
@@ -1392,6 +1411,7 @@ class TrademarkApp(QMainWindow):
         self.table_all.setItem(row, 6, QTableWidgetItem(str(r.get('classes', ''))))
         self.table_all.setCellWidget(row, 7, self._open_button(r.get('detail_url', ''), compact=True))
         self.table_all.setSortingEnabled(sorting)
+
 
     def on_scan_completed(self, scan_id: int, excel_path: str, total: int, alerts: int):
         self.btn_start.setEnabled(True)
@@ -1488,12 +1508,59 @@ class TrademarkApp(QMainWindow):
             self.lbl_session_status.setText(f"✅ نشست فعال: {user_name}")
             self.lbl_session_status.setStyleSheet("font-size: 8.5pt; font-weight: bold; color: #15803D;")
             self.btn_login_session.setText("تغییر حساب")
-            self.lbl_decl_status.setText("ورود موفقیت‌آمیز بود و نشست ذخیره شد.")
-            self._msg("information", "ورود موفق", f"ورود با موفقیت انجام شد.\nنشست شما ({user_name}) ذخیره گردید و در دفعات بعدی نیازی به لاگین نخواهید داشت.")
+            self.lbl_decl_status.setText(f"ورود موفق: {user_name}")
+
+            # بررسی وجود اطلاعات اسکن‌شده قبلی برای این حساب
+            from scanner.auth import has_account_saved_data, restore_account_data
+            has_data, prev_count, last_date = has_account_saved_data(user_name)
+
+            if has_data:
+                date_str = f" (تاریخ ثبت: {last_date})" if last_date else ""
+                reply = QMessageBox.question(
+                    self,
+                    "بازیابی اطلاعات جلسه قبلی",
+                    f"شما با حساب «{user_name}» وارد شدید.\n\n"
+                    f"سوابق اسکن‌شده قبلی این حساب{date_str} شامل {prev_count} رکورد در سیستم موجود است.\n\n"
+                    f"آیا مایلید اطلاعات جلسه قبلی بازیابی و در جدول‌های برنامه بارگذاری شود؟",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    store, docx_path = restore_account_data(user_name)
+                    self.load_store_into_gui(store)
+                    self.lbl_decl_status.setText(f"اطلاعات قبلی {user_name} ({len(store)} رکورد) بارگذاری شد.")
+                    self._msg("information", "بازیابی موفق", f"تعداد {len(store)} رکورد از جلسه قبلی با موفقیت بارگذاری گردید.")
+                else:
+                    self.lbl_decl_status.setText("آماده برای اسکن جدید.")
+            else:
+                self._msg("information", "ورود موفق", f"ورود با موفقیت انجام شد.\nحساب کاربری: {user_name}")
         else:
             logger.warning(f"ورود ناموفق یا بسته شدن پنجره: {user_name}")
             self.lbl_decl_status.setText("فرآیند ورود انجام نشد.")
             self._msg("warning", "خطای ورود", f"ورود انجام نشد یا پنجره بسته شد:\n{user_name}")
+
+    def load_store_into_gui(self, store: dict):
+        """بارگذاری رکوردهای ذخیره‌شده جلسه قبلی در جدول‌های برنامه."""
+        self.table_alerts.setRowCount(0)
+        self.table_rejected.setRowCount(0)
+        self.table_all.setRowCount(0)
+        self._reset_counters()
+
+        for entry in store.values():
+            self.on_record_found(entry)
+
+        self.tabs.setCurrentIndex(2)
+
+    def closeEvent(self, event):
+        """هنگام بستن برنامه، توکن‌ها و نشست فعال پاکسازی می‌شوند."""
+        logger.info("بستن برنامه: پاکسازی توکن‌های فعال نشست...")
+        try:
+            from scanner.auth import clear_active_session
+            clear_active_session()
+        except Exception as e:
+            logger.error(f"خطا در پاکسازی توکن‌های فعال هنگام خروج: {e}")
+        event.accept()
+
 
     def start_declaration_scan(self, mode: str):
         logger.info(f"شروع فرآیند اسکن اظهارنامه‌ها با مود: '{mode}'")

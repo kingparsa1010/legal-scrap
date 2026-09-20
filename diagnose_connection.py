@@ -1,6 +1,6 @@
 """
 اسکریپت جامع عیب‌یابی و آزمایش ارتباط با سامانه ثبت اسناد و املاک (SSAA)
-Comprehensive Diagnostic Tool for ipm.ssaa.ir Connection & Persistent Session
+Comprehensive Diagnostic Tool for ipm.ssaa.ir Connection & Edge WebView2 Session
 """
 import sys
 import os
@@ -13,10 +13,17 @@ import json
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT_DIR)
 
+# تنظیم انکودینگ UTF-8 برای ترمینال ویندوز
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from scanner.logger import setup_logging, get_logger, get_log_file_path
 from scanner.auth import (
-    SESSION_FILE, STORAGE_STATE_FILE, START_URL, USER_AGENT,
-    has_saved_session, get_saved_user_name, get_saved_cookies
+    SESSION_FILE, START_URL, USER_AGENT,
+    has_saved_session, get_saved_user_name, get_saved_cookies,
+    get_authenticated_session
 )
 
 setup_logging("DEBUG")
@@ -48,157 +55,107 @@ def test_dns_and_socket():
     try:
         t0 = time.time()
         sock = socket.create_connection((host, port), timeout=10)
-        tcp_time = (time.time() - t0) * 1000
-        print(f"✅ اتصال TCP به پورت ۴۴۳ برقرار شد (زمان تأخیر: {tcp_time:.1f} میلی‌ثانیه)")
-        logger.info(f"TCP connection established in {tcp_time:.1f}ms")
+        t_conn = time.time() - t0
+        print(f"✅ اتصال TCP سوکت به پورت ۴۴۳ برقرار شد (زمان: {t_conn:.2f} ثانیه)")
+        logger.info(f"TCP socket established in {t_conn:.2f}s")
     except Exception as e:
-        print(f"❌ خطا در اتصال TCP به پورت ۴۴۳: {e}")
-        logger.error(f"TCP connection failed: {e}")
+        print(f"❌ برقراری اتصال TCP ناموفق بود: {e}")
+        logger.error(f"TCP socket failed: {e}")
         return False
 
     # ۳. دست‌تکانی امنیتی TLS/SSL
     try:
-        t0 = time.time()
         context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        t0 = time.time()
         with context.wrap_socket(sock, server_hostname=host) as ssock:
-            tls_version = ssock.version()
+            t_ssl = time.time() - t0
             cipher = ssock.cipher()
-            tls_time = (time.time() - t0) * 1000
-            print(f"✅ دست‌تکانی TLS برقرار شد ({tls_version}, {cipher[0]} - {tls_time:.1f}ms)")
-            logger.info(f"TLS handshake success: {tls_version}, {cipher[0]} in {tls_time:.1f}ms")
+            version = ssock.version()
+            print(f"✅ دست‌تکانی امنیتی TLS برقرار شد (نسخه: {version}، رمزگذاری: {cipher[0]}، زمان: {t_ssl:.2f} ثانیه)")
+            logger.info(f"TLS handshake success: {version}, {cipher}")
     except Exception as e:
-        print(f"❌ خطا در دست‌تکانی TLS/SSL: {e}")
-        print("💡 نکته: این خطا معمولاً هنگام روشن بودن VPN یا مسدودسازی توسط فایروال رخ می‌دهد.")
-        logger.error(f"TLS handshake failed: {e}")
-        return False
+        print(f"⚠️ دست‌تکانی TLS به صورت استاندارد رد شد یا مسدود گردید: {e}")
+        logger.warning(f"TLS handshake warning: {e}")
+        return True
 
     return True
 
 
+def test_webview2_environment():
+    print_step("مرحله ۲: بررسی محیط Edge WebView2 و کتابخانه PyWebView")
+    try:
+        import webview
+        print("✅ کتابخانه pywebview با موفقیت بارگذاری شد.")
+        try:
+            import webview.platforms.winforms as wf
+            is_chrom = getattr(wf, "is_chromium", False)
+            if is_chrom:
+                print("✅ موتور بومی Microsoft Edge WebView2 ویندوز فعال و آماده به کار است.")
+                print("   (کاملاً مستقل از Google Chrome و بدون نیاز به نصب Playwright)")
+            else:
+                print("⚠️ موتور WebView2 گزارش نشد، حالت پیش‌فرض ویندوز فعال است.")
+        except Exception as e:
+            print(f"ℹ️ اطلاعات موتور وب‌ویو: {e}")
+    except ImportError:
+        print("❌ کتابخانه pywebview نصب نیست. لطفاً با دستور 'pip install pywebview' آن را نصب فرمایید.")
+
+
 def test_session_files():
-    print_step("مرحله ۲: بررسی فایل‌های ذخیره‌شده نشست کاربر")
+    print_step("مرحله ۳: بررسی فایل‌های نشست و اعتبار لاگین")
     has_session = has_saved_session()
-    print(f"آیا فایل نشستی ذخیره شده است؟ {'✅ بله' if has_session else '❌ خیر'}")
+    user_name = get_saved_user_name()
+    cookies = get_saved_cookies()
 
-    if os.path.exists(STORAGE_STATE_FILE):
-        size_kb = os.path.getsize(STORAGE_STATE_FILE) / 1024
-        try:
-            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f:
-                state_data = json.load(f)
-            cookies = state_data.get("cookies", [])
-            origins = state_data.get("origins", [])
-            print(f"✅ فایل storage_state موجود است: {STORAGE_STATE_FILE} ({size_kb:.1f} KB)")
-            print(f"   • تعداد کل کوکی‌ها با جزئیات کامل امنیتی: {len(cookies)}")
-            print(f"   • منشأهای محلی ذخیره شده (Origins): {len(origins)}")
-            for c in cookies[:5]:
-                print(f"     - کوکی: {c.get('name')} (دامنه: {c.get('domain')}, امن: {c.get('secure')})")
-        except Exception as e:
-            print(f"⚠️ خطا در خواندن storage_state: {e}")
+    if has_session:
+        print(f"✅ فایل نشست موجود است: {SESSION_FILE}")
+        print(f"   • نام کاربر واردشده: {user_name if user_name else 'کاربر سامانه'}")
+        print(f"   • تعداد کوکی‌های ذخیره‌شده: {len(cookies)}")
+        for k in list(cookies.keys())[:5]:
+            print(f"     - کوکی: {k}")
     else:
-        print(f"⚠️ فایل {STORAGE_STATE_FILE} هنوز ایجاد نشده است.")
-
-    if os.path.exists(SESSION_FILE):
-        try:
-            with open(SESSION_FILE, "r", encoding="utf-8") as f:
-                auth_data = json.load(f)
-            user_name = auth_data.get("user_name", "نامشخص")
-            saved_at = auth_data.get("saved_at", "نامشخص")
-            print(f"✅ فایل session_auth موجود است. کاربر: '{user_name}' | تاریخ ذخیره: {saved_at}")
-        except Exception as e:
-            print(f"⚠️ خطا در خواندن session_auth: {e}")
-    else:
-        print(f"⚠️ فایل {SESSION_FILE} موجود نیست.")
+        print(f"⚠️ هنوز هیچ نشستی ذخیره نشده است ({SESSION_FILE} موجود نیست).")
+        print("   کاربر برای اسکن اظهارنامه‌ها باید یک‌بار دکمه «ورود به سامانه» را کلیک کند.")
 
     return has_session
 
 
-def test_playwright_navigation():
-    print_step("مرحله ۳: اجرای مرورگر Chromium و تست اعتبار نشست در سامانه")
+def test_http_session_request():
+    print_step("مرحله ۴: تست مستقیم ارسال درخواست HTTP به سامانه با نشست فعال")
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("❌ کتابخانه playwright نصب نیست.")
-        return
+        import requests
+        from bs4 import BeautifulSoup
+        session = get_authenticated_session()
+        print(f"🌐 در حال ارسال درخواست HTTP GET به {START_URL} ...")
+        t0 = time.time()
+        resp = session.get(START_URL, timeout=30, verify=False)
+        elapsed = time.time() - t0
 
-    print("🚀 در حال اجرای مرورگر Chromium در پس‌زمینه (Headless)...")
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"]
-            )
+        print(f"📊 نتایج پاسخ سرور:")
+        print(f"   • کد وضعیت HTTP: {resp.status_code}")
+        print(f"   • زمان پاسخ‌دهی: {elapsed:.2f} ثانیه")
+        print(f"   • آدرس نهایی: {resp.url}")
 
-            if os.path.exists(STORAGE_STATE_FILE):
-                print(f"📂 در حال بارگذاری وضعیت نشست از: {STORAGE_STATE_FILE}")
-                context = browser.new_context(
-                    storage_state=STORAGE_STATE_FILE,
-                    viewport={"width": 1280, "height": 800},
-                    user_agent=USER_AGENT
-                )
-            else:
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 800},
-                    user_agent=USER_AGENT
-                )
-                cookies = get_saved_cookies()
-                if cookies:
-                    print(f"🔑 تزریق {len(cookies)} کوکی متنی به مرورگر...")
-                    context.add_cookies([
-                        {"name": k, "value": v, "domain": "ipm.ssaa.ir", "path": "/"}
-                        for k, v in cookies.items()
-                    ])
+        soup = BeautifulSoup(resp.text, "html.parser")
+        user_elem = soup.select_one("#userData")
+        table_elem = soup.select_one("#DataList")
 
-            page = context.new_page()
-            print(f"🌐 در حال پیمایش به {START_URL} ...")
-            t0 = time.time()
-            resp = page.goto(START_URL, timeout=45000)
-            elapsed = time.time() - t0
+        has_user = bool(user_elem and user_elem.get_text(strip=True))
+        has_table = bool(table_elem)
 
-            status_code = resp.status if resp else "None"
-            final_url = page.url
-            title = page.title()
+        print(f"   • وجود شناسه کاربر (#userData): {'✅ بله' if has_user else '❌ خیر'}")
+        print(f"   • وجود جدول اظهارنامه‌ها (#DataList): {'✅ بله' if has_table else '❌ خیر'}")
 
-            print(f"\n📊 نتایج پاسخ سرور:")
-            print(f"   • کد وضعیت HTTP: {status_code}")
-            print(f"   • زمان پاسخ‌دهی: {elapsed:.2f} ثانیه")
-            print(f"   • آدرس نهایی: {final_url}")
-            print(f"   • عنوان صفحه: '{title}'")
-
-            user_data_count = page.locator("#userData").count()
-            data_list_count = page.locator("#DataList").count()
-            print(f"   • وجود شناسه کاربر (#userData): {'✅ بله' if user_data_count > 0 else '❌ خیر'}")
-            print(f"   • وجود جدول اظهارنامه‌ها (#DataList): {'✅ بله' if data_list_count > 0 else '❌ خیر'}")
-
-            if user_data_count > 0:
-                user_text = page.locator("#userData").inner_text().strip()
-                print(f"\n🎉 تبریک! نشست شما کاملاً معتبر و فعال است:")
-                print(f"   مشخصات کاربر وارد شده: {user_text}")
-            elif data_list_count > 0:
-                print(f"\n✅ دسترسی به جدول اظهارنامه‌ها با موفقیت تأیید شد.")
-            else:
-                print(f"\n⚠️ نشست شما توسط سرور تأیید نشد.")
-                if status_code == 500:
-                    print("🛑 سرور خطای داخلی ۵۰۰ داده است (احتمالاً توکن‌ها در سرور منقضی شده‌اند).")
-                    print("👉 راه‌حل: در برنامه دکمه «تغییر حساب / ورود به سامانه» را بزنید و یک‌بار وارد شوید.")
-                elif "Login" in final_url or "Account" in final_url:
-                    print("🛑 سامانه به صفحه ورود هدایت کرد (نیاز به ورود مجدد).")
-                else:
-                    os.makedirs(os.path.join(ROOT_DIR, "logs"), exist_ok=True)
-                    shot_path = os.path.join(ROOT_DIR, "logs", "diagnostic_screenshot.png")
-                    html_path = os.path.join(ROOT_DIR, "logs", "diagnostic_page.html")
-                    page.screenshot(path=shot_path)
-                    with open(html_path, "w", encoding="utf-8") as f:
-                        f.write(page.content())
-                    print(f"📷 تصویر صفحه خطا در {shot_path} ذخیره شد.")
-                    print(f"📄 فایل HTML در {html_path} ذخیره شد.")
-
-            browser.close()
+        if has_user:
+            print(f"\n🎉 تبریک! نشست شما کاملاً معتبر و فعال است:")
+            print(f"   مشخصات کاربر: {user_elem.get_text(strip=True)}")
+        elif has_table:
+            print("\n✅ دسترسی به جدول اظهارنامه‌ها با موفقیت تأیید شد.")
+        else:
+            print("\n⚠️ نشست ذخیره‌شده در این درخواست شناسایی نشد (ممکن است نیاز به ورود مجدد باشد).")
 
     except Exception as e:
-        print(f"❌ خطا در اجرای Playwright: {e}")
-        logger.error(f"Playwright navigation failed: {e}")
+        print(f"❌ خطا در ارسال درخواست HTTP: {e}")
+        logger.error(f"HTTP test request failed: {e}")
 
 
 def main():
@@ -209,12 +166,13 @@ def main():
     print("توجه: پیش از اجرای این تست، لطفاً مطمئن شوید که فیلترشکن (VPN) خاموش است.")
 
     net_ok = test_dns_and_socket()
+    test_webview2_environment()
     test_session_files()
 
     if net_ok:
-        test_playwright_navigation()
+        test_http_session_request()
     else:
-        print("\n❌ به دلیل عدم برقراری اتصال شبکه با ipm.ssaa.ir، تست مرورگر لغو شد.")
+        print("\n❌ به دلیل عدم برقراری اتصال شبکه با ipm.ssaa.ir، ادامه تست لغو شد.")
 
     print("\n" + "=" * 65)
     print(f"📁 گزارش کامل این عملیات در فایل لاگ ثبت شد: {get_log_file_path()}")

@@ -226,4 +226,9 @@ logs/
 session_*.json
 temp_*.db
 .cache/
+scans.db
+data_store.json
+brands.docx
+accounts/
+reports/
 
