@@ -21,7 +21,7 @@ DATA_STORE_PATH = os.path.join(ROOT_DIR, "data_store.json")
 WORD_OUTPUT_PATH = os.path.join(ROOT_DIR, "brands.docx")
 
 START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 
 
 def sanitize_account_name(name: str) -> str:
@@ -176,13 +176,28 @@ def save_cookies(cookies: Dict[str, str], user_name: str = ""):
         logger.error(f"خطا در ذخیره سازی نشست: {e}")
 
 
+def get_saved_user_agent() -> str:
+    """خواندن User-Agent اختصاصی ذخیره‌شده از نشست مرورگر WebView2."""
+    if os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ua = data.get("user_agent")
+                if ua:
+                    return ua
+        except Exception:
+            pass
+    return USER_AGENT
+
+
 def get_authenticated_session() -> requests.Session:
     """ایجاد یا بازیابی نشست requests با کوکی‌های ذخیره‌شده."""
     session = requests.Session()
+    ua = get_saved_user_agent()
     session.headers.update({
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "fa,en-US;q=0.9,en;q=0.8",
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "fa,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
         "Referer": START_URL,
     })
 

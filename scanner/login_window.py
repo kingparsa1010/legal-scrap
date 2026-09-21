@@ -14,7 +14,7 @@ import webview
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
 START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 
 
 def monitor_login(window: webview.Window, result: Dict[str, Any], timeout_seconds: int = 360):
@@ -31,19 +31,20 @@ def monitor_login(window: webview.Window, result: Dict[str, Any], timeout_second
                 (function() {
                     var u = document.querySelector('#userData');
                     if (u && u.innerText && u.innerText.trim().length > 0) {
-                        return { logged_in: true, user: u.innerText.trim() };
+                        return { logged_in: true, user: u.innerText.trim(), ua: navigator.userAgent };
                     }
                     var d = document.querySelector('#DataList');
                     if (d) {
-                        return { logged_in: true, user: 'کاربر سامانه' };
+                        return { logged_in: true, user: 'کاربر سامانه', ua: navigator.userAgent };
                     }
-                    return { logged_in: false, user: '' };
+                    return { logged_in: false, user: '', ua: navigator.userAgent };
                 })()
             """
             eval_res = window.evaluate_js(js_code)
 
             if eval_res and isinstance(eval_res, dict) and eval_res.get("logged_in"):
                 user_raw = eval_res.get("user", "")
+                captured_ua = eval_res.get("ua", "").strip() or USER_AGENT
                 user_name = re.sub(r'\s+', ' ', user_raw).replace("خروج", "").replace("سلام", "").strip() or "کاربر سامانه"
 
                 # تأخیر کوتاه برای تثبیت کوکی‌ها در مرورگر
@@ -77,9 +78,10 @@ def monitor_login(window: webview.Window, result: Dict[str, Any], timeout_second
                                     cookies_dict[name] = val
                                     cookie_list.append(c)
 
-                # ذخیره اطلاعات ورود در فایل نشست
+                # ذخیره اطلاعات ورود در فایل نشست همراه با User-Agent اختصاصی موتور وب‌ویو
                 payload = {
                     "user_name": user_name,
+                    "user_agent": captured_ua,
                     "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "cookies": cookies_dict,
                     "cookie_list": cookie_list
