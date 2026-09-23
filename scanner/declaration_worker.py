@@ -60,6 +60,10 @@ def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
         dec_a = tds[2].find("a")
         dec_no_display = dec_a.get_text(strip=True) if dec_a else tds[2].get_text(strip=True)
         detail_url = dec_a["href"].strip() if dec_a and dec_a.has_attr("href") else ""
+        if detail_url.startswith("/"):
+            detail_url = f"https://ipm.ssaa.ir{detail_url}"
+        elif detail_url and not detail_url.startswith("http"):
+            detail_url = f"https://ipm.ssaa.ir/{detail_url}"
         m = re.search(r"DecNo=(\d+)", detail_url)
         dec_no_id = m.group(1) if m else dec_no_display
 

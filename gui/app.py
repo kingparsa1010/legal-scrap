@@ -4,6 +4,7 @@ Persian RTL Desktop GUI — light/dark/system themes, responsive layout
 """
 import sys
 import os
+import subprocess
 import webbrowser
 from typing import List, Optional
 
@@ -12,9 +13,9 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QProgressBar, QGroupBox, QSpinBox,
     QMessageBox, QFrame, QScrollArea, QSizePolicy, QAbstractItemView,
-    QSplitter, QStyleFactory, QDialog, QPlainTextEdit
+    QSplitter, QStyleFactory, QDialog, QPlainTextEdit, QMenu
 )
-from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QFont, QColor, QCursor, QPalette
 
 from scanner.logger import (
@@ -99,6 +100,9 @@ QPushButton#RowBtn { background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFD
     padding: 5px 10px; font-size: 8.5pt; border-radius: 6px; }
 QPushButton#RowBtn:hover { background: #DBEAFE; }
 QPushButton#RowBtn:disabled { background: #F1F5F9; color: #94A3B8; border-color: #E2E8F0; }
+QPushButton#CopyBtn { background: #F8FAFC; color: #475569; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 9.5pt; }
+QPushButton#CopyBtn:hover { background: #E2E8F0; color: #0F172A; }
+QPushButton#CopyBtn:disabled { background: #F1F5F9; color: #CBD5E1; border-color: #E2E8F0; }
 
 QLabel#CaptchaImage { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; color: #64748B; font-size: 9pt; }
 QProgressBar { background: #E2E8F0; border: none; border-radius: 5px; height: 10px; text-align: center; font-size: 8pt; color: #475569; }
@@ -191,6 +195,9 @@ QPushButton#RowBtn { background: #16283F; color: #7DD3FC; border: 1px solid #335
     padding: 5px 10px; font-size: 8.5pt; border-radius: 6px; }
 QPushButton#RowBtn:hover { background: #1E3A5F; }
 QPushButton#RowBtn:disabled { background: #1E293B; color: #64748B; border-color: #334155; }
+QPushButton#CopyBtn { background: #1E293B; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; font-size: 9.5pt; }
+QPushButton#CopyBtn:hover { background: #334155; color: #F8FAFC; }
+QPushButton#CopyBtn:disabled { background: #0F172A; color: #475569; border-color: #1E293B; }
 
 QLabel#CaptchaImage { background: #F8FAFC; border: 1px solid #33507A; border-radius: 10px; color: #475569; font-size: 9pt; }
 QProgressBar { background: #1E293B; border: none; border-radius: 5px; height: 10px; text-align: center; font-size: 8pt; color: #CBD5E1; }
@@ -1311,16 +1318,114 @@ class TrademarkApp(QMainWindow):
         self.add_to_table_all(r)
         self._refresh_stats()
 
-    def _open_button(self, url: str, compact: bool = False) -> QPushButton:
-        btn = QPushButton("مشاهده پرونده" if not compact else "مشاهده", self)
-        btn.setObjectName("RowBtn")
-        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        if url:
-            btn.clicked.connect(lambda _, u=url: webbrowser.open(u))
+    def _normalize_url(self, url: str) -> str:
+        """تبدیل آدرس‌های نسبی یا ناقص به آدرس کامل سامانه ثبت اسناد."""
+        if not url:
+            return ""
+        url = url.strip()
+        if url.startswith("/"):
+            return f"https://ipm.ssaa.ir{url}"
+        if not url.startswith("http://") and not url.startswith("https://"):
+            return f"https://ipm.ssaa.ir/{url}"
+        return url
+
+    def copy_url_to_clipboard(self, url: str, title: str = ""):
+        """کپی آدرس پرونده به حافظه کلیپ‌بورد با بازخورد تصویری."""
+        url = self._normalize_url(url)
+        if not url:
+            return
+        try:
+            cb = QApplication.clipboard()
+            if cb:
+                cb.setText(url)
+            subprocess.run(["clip"], input=url.encode("utf-16"), check=False)
+        except Exception:
+            pass
+
+        logger.info(f"آدرس پرونده در کلیپ‌بورد کپی شد: {url}")
+        self.lbl_decl_status.setText(f"📋 لینک پرونده کپی شد: {title or url[:45]}")
+
+    def open_in_webview(self, url: str, title: str = ""):
+        """باز کردن پرونده در پنجره بومی WebView2 ویندوز با نوار ابزار کپی لینک."""
+        url = self._normalize_url(url)
+        if not url:
+            self._msg("warning", "خطا", "آدرس پرونده موجود نیست یا قابل باز شدن نمی‌باشد.")
+            return
+
+        viewer_script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "scanner", "detail_viewer.py"
+        )
+        if os.path.exists(viewer_script):
+            try:
+                logger.info(f"باز کردن پرونده در WebView2: {url}")
+                self.lbl_decl_status.setText(f"در حال باز کردن پرونده: {title or url[:40]}...")
+                subprocess.Popen(
+                    [sys.executable, viewer_script, url, title or "مشاهده پرونده"],
+                    shell=False
+                )
+                return
+            except Exception as e:
+                logger.error(f"خطا در اجرای detail_viewer: {e}")
+
+        # در صورت نبود اسکریپت یا خطا، باز کردن در مرورگر سیستم
+        webbrowser.open(url)
+
+    def _open_button(self, url: str, compact: bool = False, title: str = "") -> QWidget:
+        """ایجاد ویجت ترکیبی دکمه مشاهده پرونده (در وب‌ویو) و دکمه کپی لینک."""
+        normalized_url = self._normalize_url(url)
+        container = QWidget(self)
+        hlayout = QHBoxLayout(container)
+        hlayout.setContentsMargins(4, 2, 4, 2)
+        hlayout.setSpacing(4)
+
+        btn_view = QPushButton("مشاهده" if compact else "مشاهده پرونده", container)
+        btn_view.setObjectName("RowBtn")
+        btn_view.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+        btn_copy = QPushButton("📋", container)
+        btn_copy.setObjectName("CopyBtn")
+        btn_copy.setFixedWidth(28)
+        btn_copy.setFixedHeight(26)
+        btn_copy.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+        if normalized_url:
+            btn_view.setToolTip("کلیک: باز کردن در وب‌ویو داخلی (Edge WebView2)\nکلیک راست: گزینه‌های دیگر")
+            btn_view.clicked.connect(lambda _, u=normalized_url, t=title: self.open_in_webview(u, t))
+
+            # منوی کلیک راست
+            btn_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            def on_context_menu(pos, u=normalized_url, t=title):
+                menu = QMenu(self)
+                act_web = menu.addAction("📑 مشاهده در وب‌ویو (WebView2)")
+                act_copy = menu.addAction("📋 کپی لینک پرونده")
+                act_browser = menu.addAction("🌐 باز کردن در مرورگر سیستم")
+                action = menu.exec(btn_view.mapToGlobal(pos))
+                if action == act_web:
+                    self.open_in_webview(u, t)
+                elif action == act_copy:
+                    self.copy_url_to_clipboard(u, t)
+                elif action == act_browser:
+                    webbrowser.open(u)
+
+            btn_view.customContextMenuRequested.connect(on_context_menu)
+
+            btn_copy.setToolTip("کپی مستقیم آدرس پرونده به کلیپ‌بورد")
+            def on_copy_click(_, u=normalized_url, t=title, b=btn_copy):
+                self.copy_url_to_clipboard(u, t)
+                b.setText("✅")
+                QTimer.singleShot(1600, lambda: b.setText("📋"))
+
+            btn_copy.clicked.connect(on_copy_click)
         else:
-            btn.setEnabled(False)
-            btn.setToolTip("لینک پرونده موجود نیست")
-        return btn
+            btn_view.setEnabled(False)
+            btn_view.setToolTip("لینک پرونده موجود نیست")
+            btn_copy.setEnabled(False)
+            btn_copy.setToolTip("لینک پرونده موجود نیست")
+
+        hlayout.addWidget(btn_view)
+        hlayout.addWidget(btn_copy)
+        return container
 
     def _risk_colors(self, risk: str):
         if self._dark_active:
@@ -1355,13 +1460,14 @@ class TrademarkApp(QMainWindow):
         item_risk.setForeground(fg)
         self.table_alerts.setItem(row, 2, item_risk)
 
+        title = r.get('title', '')
         self.table_alerts.setItem(row, 3, QTableWidgetItem(r.get('matched_brand', '')))
-        self.table_alerts.setItem(row, 4, QTableWidgetItem(r.get('title', '')))
+        self.table_alerts.setItem(row, 4, QTableWidgetItem(title))
         self.table_alerts.setItem(row, 5, QTableWidgetItem(r.get('declaration_no', '')))
         self.table_alerts.setItem(row, 6, QTableWidgetItem(r.get('declaration_date', '')))
         self.table_alerts.setItem(row, 7, QTableWidgetItem(r.get('status', '')))
         self.table_alerts.setItem(row, 8, QTableWidgetItem(str(r.get('classes', ''))))
-        self.table_alerts.setCellWidget(row, 9, self._open_button(r.get('detail_url', '')))
+        self.table_alerts.setCellWidget(row, 9, self._open_button(r.get('detail_url', ''), title=title))
         self.table_alerts.setSortingEnabled(sorting)
 
     def add_to_table_rejected(self, r: dict):
@@ -1370,8 +1476,9 @@ class TrademarkApp(QMainWindow):
         row = self.table_rejected.rowCount()
         self.table_rejected.insertRow(row)
 
+        title = r.get('title', '')
         self.table_rejected.setItem(row, 0, NumericTableWidgetItem(row + 1))
-        self.table_rejected.setItem(row, 1, QTableWidgetItem(r.get('title', '')))
+        self.table_rejected.setItem(row, 1, QTableWidgetItem(title))
         self.table_rejected.setItem(row, 2, QTableWidgetItem(r.get('declaration_no', '')))
         self.table_rejected.setItem(row, 3, QTableWidgetItem(r.get('declaration_date', '')))
 
@@ -1381,7 +1488,7 @@ class TrademarkApp(QMainWindow):
         self.table_rejected.setItem(row, 4, status_item)
 
         self.table_rejected.setItem(row, 5, QTableWidgetItem(str(r.get('classes', ''))))
-        self.table_rejected.setCellWidget(row, 6, self._open_button(r.get('detail_url', ''), compact=True))
+        self.table_rejected.setCellWidget(row, 6, self._open_button(r.get('detail_url', ''), compact=True, title=title))
         self.table_rejected.setSortingEnabled(sorting)
 
 
@@ -1391,11 +1498,12 @@ class TrademarkApp(QMainWindow):
         row = self.table_all.rowCount()
         self.table_all.insertRow(row)
 
+        title = r.get('title', '')
         is_rej = r.get('is_rejected')
         rej_fa = "رد شده" if is_rej else "فعال"
 
         self.table_all.setItem(row, 0, NumericTableWidgetItem(row + 1))
-        self.table_all.setItem(row, 1, QTableWidgetItem(r.get('title', '')))
+        self.table_all.setItem(row, 1, QTableWidgetItem(title))
         self.table_all.setItem(row, 2, QTableWidgetItem(r.get('declaration_no', '')))
         self.table_all.setItem(row, 3, QTableWidgetItem(r.get('declaration_date', '')))
         self.table_all.setItem(row, 4, QTableWidgetItem(r.get('status', '')))
@@ -1409,7 +1517,7 @@ class TrademarkApp(QMainWindow):
         self.table_all.setItem(row, 5, item_rej)
 
         self.table_all.setItem(row, 6, QTableWidgetItem(str(r.get('classes', ''))))
-        self.table_all.setCellWidget(row, 7, self._open_button(r.get('detail_url', ''), compact=True))
+        self.table_all.setCellWidget(row, 7, self._open_button(r.get('detail_url', ''), compact=True, title=title))
         self.table_all.setSortingEnabled(sorting)
 
 
