@@ -8,12 +8,21 @@ import os
 # اطمینان از قرارگیری مسیر ریشه پروژه در PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+# پشتیبانی از باز کردن پنجره WebView2 در حالت فایل کامپایل‌شده (EXE)
+if len(sys.argv) > 1 and sys.argv[1] == '--view-detail':
+    from scanner.detail_viewer import open_detail_viewer
+    target_url = sys.argv[2] if len(sys.argv) > 2 else ""
+    brand_title = sys.argv[3] if len(sys.argv) > 3 else "مشاهده پرونده"
+    if target_url:
+        open_detail_viewer(target_url, brand_title)
+    sys.exit(0)
+
 from gui.app import run_app
 
 def main():
     print("==================================================")
     print("  سامانه پایش هوشمند علائم تجاری (مرکز مالکیت معنوی) ")
-    print("  Iranian Intellectual Property Trademark Monitor   ")
+    print("      سازمان ثبت اسناد و املاک کشور       ")
     print("==================================================")
     run_app()
 

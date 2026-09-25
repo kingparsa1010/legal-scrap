@@ -3,132 +3,24 @@
 Background QThread Worker for Public DeclarationList Scraping with Dual Scan Modes and Similarity Matching
 """
 import os
-import re
-import json
-import time
-from typing import Dict, Any, List, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
-import requests
 import urllib3
 
 from scanner.logger import get_logger
 from scanner.auth import (
-    get_authenticated_session, check_session_alive,
-    has_saved_session, get_saved_cookies, get_saved_user_name,
-    save_account_data, USER_AGENT
+    get_authenticated_session, has_saved_session, get_saved_user_name,
 )
-from scanner.similarity import TrademarkSimilarityEngine
-from scanner.database import (
-    get_watchlist, create_scan_session, save_declarations_batch,
-    update_scan_stats, DB_FILE
-)
-from scanner.word_exporter import export_declarations_to_word
+from scanner.store import DATA_STORE_PATH, load_store
+from services.declaration_scan_service import collect_declarations, IncompleteFullScan
+from services.declaration_completion_service import complete_declaration_scan
 from bs4 import BeautifulSoup
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = get_logger("decl_worker")
 
 
-BASE_LIST_URL = (
-    "https://ipm.ssaa.ir/CA/DeclarationList"
-    "?DeclarationType=&decNo=&FromDate=&ToDate=&DeclarationState="
-    "&dTitle=&DeclarationSort=1&TotalRecord={total_record}&p={page}"
-)
-START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
-DATA_STORE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data_store.json")
-WORD_OUTPUT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "brands.docx")
-
-
-def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
-    """تجزیه HTML جدول اظهارنامه‌ها و استخراج ستون‌ها."""
-    soup = BeautifulSoup(html, "html.parser")
-    tbody = soup.find("tbody", id="DataList")
-    if not tbody:
-        return []
-
-    rows = []
-    for tr in tbody.find_all("tr", recursive=False):
-        tds = tr.find_all("td", recursive=False)
-        if len(tds) < 8:
-            continue
-
-        row_num = tds[0].get_text(strip=True)
-
-        img_a = tds[1].find("a")
-        image_url = img_a["href"].strip() if img_a and img_a.has_attr("href") else ""
-
-        dec_a = tds[2].find("a")
-        dec_no_display = dec_a.get_text(strip=True) if dec_a else tds[2].get_text(strip=True)
-        detail_url = dec_a["href"].strip() if dec_a and dec_a.has_attr("href") else ""
-        if detail_url.startswith("/"):
-            detail_url = f"https://ipm.ssaa.ir{detail_url}"
-        elif detail_url and not detail_url.startswith("http"):
-            detail_url = f"https://ipm.ssaa.ir/{detail_url}"
-        m = re.search(r"DecNo=(\d+)", detail_url)
-        dec_no_id = m.group(1) if m else dec_no_display
-
-        title = tds[3].get_text(strip=True)
-        office = tds[4].get_text(strip=True)
-
-        owner_b = tds[5].find("b")
-        percent = ""
-        owner_name = ""
-        if owner_b:
-            percent_i = owner_b.find("i")
-            percent = percent_i.get_text(strip=True) if percent_i else ""
-            owner_name = owner_b.get_text(separator=" ", strip=True)
-            if percent:
-                owner_name = owner_name.replace(percent, "").strip()
-        else:
-            owner_name = tds[5].get_text(strip=True)
-
-        date_text = tds[6].get_text(separator="|", strip=True)
-        date_parts = [p for p in date_text.split("|") if p]
-        reg_date = date_parts[0] if len(date_parts) > 0 else ""
-        reg_time = date_parts[1] if len(date_parts) > 1 else ""
-
-        status_span = tds[7].find("span")
-        status = status_span.get_text(strip=True) if status_span else tds[7].get_text(strip=True)
-
-        rows.append({
-            "dec_no_id": dec_no_id,
-            "row_num": row_num,
-            "dec_no_display": dec_no_display,
-            "declaration_no": dec_no_display,
-            "title": title,
-            "office": office,
-            "owner_name": owner_name,
-            "owner_percent": percent,
-            "reg_date": reg_date,
-            "declaration_date": reg_date,
-            "reg_time": reg_time,
-            "status": status,
-            "image_url": image_url,
-            "detail_url": detail_url,
-            "is_rejected": 1 if ("رد" in status or "ابطال" in status) else 0,
-            "classes": "5",
-        })
-    return rows
-
-
-def load_store(path: str = DATA_STORE_PATH) -> Dict[str, Any]:
-    """بارگذاری حافظه محلی رکوردهای قبلی."""
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-
-def save_store(store: Dict[str, Any], path: str = DATA_STORE_PATH):
-    """ذخیره دیکشنری رکوردها در فایل JSON."""
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(store, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[Store] Error saving store: {e}")
+from scanner import BASE_DIR
+WORD_OUTPUT_PATH = os.path.join(BASE_DIR, "brands.docx")
 
 
 class DeclarationScrapeWorker(QThread):
@@ -138,6 +30,7 @@ class DeclarationScrapeWorker(QThread):
     progress_changed = pyqtSignal(int, str)
     record_found = pyqtSignal(dict)
     scan_completed = pyqtSignal(int, int, int, str)  # total_scraped, new_count, alerts_count, docx_path
+    scan_cancelled = pyqtSignal()
     scan_failed = pyqtSignal(str)
 
     def __init__(
@@ -152,10 +45,15 @@ class DeclarationScrapeWorker(QThread):
         self.max_pages = max_pages
         self.docx_path = docx_path
         self._is_running = True
-        self.similarity_engine = TrademarkSimilarityEngine()
+        self._session = None
 
     def stop(self):
         self._is_running = False
+        if self._session:
+            try:
+                self._session.close()
+            except Exception:
+                pass
 
     def run(self):
         self.progress_changed.emit(5, "بررسی نشست ذخیره‌شده...")
@@ -173,7 +71,8 @@ class DeclarationScrapeWorker(QThread):
         self.progress_changed.emit(8, f"راه‌اندازی ارتباط امن برای {user_name}...")
         logger.info(f"اتصال مستقیم HTTP با کوکی‌های کاربر: {user_name}")
 
-        session = get_authenticated_session()
+        self._session = get_authenticated_session()
+        session = self._session
 
         self.progress_changed.emit(12, "در حال اتصال به لیست اظهارنامه‌ها...")
         logger.info(f"در حال ارسال درخواست به: {START_URL}")
@@ -184,6 +83,10 @@ class DeclarationScrapeWorker(QThread):
             logger.info(f"پاسخ دریافت شد: کد={status_code}, آدرس نهایی={resp.url}")
             html_page_1 = resp.text
         except Exception as e:
+            if not self._is_running:
+                self.progress_changed.emit(0, "اسکن توسط کاربر متوقف شد.")
+                self.scan_cancelled.emit()
+                return
             err_text = str(e)
             logger.error(f"خطای شبکه در session.get: {e}")
             if any(w in err_text for w in ["ERR_CONNECTION_CLOSED", "ERR_TIMED_OUT", "ERR_NAME_NOT_RESOLVED", "SSL", "EOF", "Connection", "Timeout"]):
@@ -221,143 +124,44 @@ class DeclarationScrapeWorker(QThread):
                 )
             return
 
-        # استخراج تعداد کل رکوردها
-        match = re.search(r'TotalRecord=(\d+)', html_page_1)
-        if match:
-            total_records = int(match.group(1))
-        else:
-            total_records = 1001
-
-        calc_pages = max(1, (total_records + 19) // 20)
-        actual_max_pages = min(self.max_pages, calc_pages)
-        logger.info(f"تعداد کل اظهارنامه‌ها در سامانه: {total_records} (~{calc_pages} صفحه). حداکثر صفحات اسکن: {actual_max_pages}")
-        self.progress_changed.emit(15, f"تعداد کل: {total_records} مورد (~{calc_pages} صفحه)")
-
-        store = load_store(DATA_STORE_PATH)
-        is_first_run = len(store) == 0
-        logger.info(f"تعداد رکوردهای موجود در کش محلی: {len(store)} مورد")
-        watchlist = get_watchlist(DB_FILE)
-
-        newly_scraped = []
-        new_count = 0
-        alerts_count = 0
-
-        page_num = 1
-        while page_num <= actual_max_pages and self._is_running:
-            if page_num > 1:
-                url = BASE_LIST_URL.format(total_record=total_records, page=page_num)
-                try:
-                    logger.debug(f"دریافت صفحه {page_num}: {url}")
-                    p_resp = session.get(url, timeout=30, verify=False)
-                    html = p_resp.text
-                except Exception as e:
-                    logger.error(f"خطا در دریافت صفحه {page_num}: {e}")
-                    break
-            else:
-                html = html_page_1
-
-            rows = parse_declaration_page(html)
-            if not rows:
-                logger.warning(f"هیچ ردیفی در صفحه {page_num} یافت نشد. پایان واکشی صفحات.")
-                break
-
-            new_on_this_page = 0
-            for entry in rows:
-                if not self._is_running:
-                    break
-
-                dec_id = entry["dec_no_id"]
-
-                # ارزیابی شباهت با برندهای شرکت
-                title = entry.get("title", "")
-                sim_score, matched_brand, risk = self.similarity_engine.evaluate_against_watchlist(title, watchlist)
-                entry["similarity_score"] = sim_score
-                entry["matched_brand"] = matched_brand
-                entry["risk_level"] = risk
-
-                if risk in ["high", "medium"]:
-                    alerts_count += 1
-                    logger.info(f"هشدار شباهت: '{title}' با برند '{matched_brand}' ({sim_score}%) - سطح: {risk}")
-
-                if dec_id not in store:
-                    newly_scraped.append(entry)
-                    store[dec_id] = entry
-                    new_on_this_page += 1
-                    new_count += 1
-
-                # ارسال به جدول زنده رابط کاربری
-                self.record_found.emit(entry)
-
-            pct = min(90, int(15 + (page_num / actual_max_pages) * 75))
-            self.progress_changed.emit(pct, f"صفحه {page_num} از {actual_max_pages} ({new_count} مورد جدید)")
-
-            # شرط توقف زودهنگام در حالت «فقط موارد جدید»
-            if self.mode == "new_only" and not is_first_run and new_on_this_page == 0:
-                logger.info(f"در صفحه {page_num} هیچ رکورد جدیدی یافت نشد. توقف هوشمند اسکن سریع.")
-                self.progress_changed.emit(pct, "به رکوردهای قبلاً ثبت‌شده رسیدیم. توقف اسکن سریع.")
-                break
-
-            page_num += 1
-            time.sleep(0.15)
-
-        if not self._is_running:
-            logger.info("اسکن توسط کاربر متوقف شد.")
-            self.progress_changed.emit(0, "اسکن توسط کاربر متوقف شد.")
+        existing_store = load_store(DATA_STORE_PATH) if self.mode == "new_only" else {}
+        try:
+            store, newly_scraped, new_count, total_records = collect_declarations(
+                session=session,
+                first_html=html_page_1,
+                mode=self.mode,
+                max_pages=self.max_pages,
+                existing_store=existing_store,
+                is_running=lambda: self._is_running,
+                on_progress=self.progress_changed.emit,
+                on_record=self.record_found.emit,
+            )
+        except IncompleteFullScan as exc:
+            self.scan_failed.emit(f"{exc} داده‌های قبلی بدون تغییر حفظ شدند.")
             return
 
-        # ذخیره در کش محلی ریشه و پوشه اختصاصی حساب کاربر
-        save_store(store, DATA_STORE_PATH)
-        save_account_data(user_name, store, self.docx_path)
-        logger.info(f"کش محلی و پوشه حساب '{user_name}' با {len(store)} رکورد به‌روزرسانی شد.")
+        if not self._is_running:
+            self.progress_changed.emit(0, "اسکن متوقف شد؛ داده ناقص ذخیره نشد.")
+            self.scan_cancelled.emit()
+            return
 
-
-        # ذخیره در پایگاه داده SQLite
         try:
-            scan_date = time.strftime("%Y/%m/%d %H:%M")
-            scan_id = create_scan_session(
-                scan_date=scan_date,
-                search_params={"mode": self.mode, "source": "DeclarationList", "total": total_records},
-                total_records=len(store),
-                class5_count=0,
-                alerts_count=alerts_count,
-                db_path=DB_FILE
+            complete_declaration_scan(
+                mode=self.mode,
+                total_records=total_records,
+                store=store,
+                new_records=newly_scraped,
+                user_name=user_name,
+                docx_path=self.docx_path,
+                on_progress=self.progress_changed.emit,
             )
-            # رکوردهای جدید در پایگاه داده درج شوند
-            if newly_scraped:
-                save_declarations_batch(scan_id, newly_scraped, db_path=DB_FILE)
-                logger.info(f"{len(newly_scraped)} رکورد جدید در پایگاه داده SQLite ذخیره شد.")
-            elif store:
-                save_declarations_batch(scan_id, list(store.values())[:100], db_path=DB_FILE)
-        except Exception as e:
-            logger.error(f"خطا در ثبت پایگاه داده: {e}")
+        except Exception as exc:
+            logger.exception("خطا در ثبت یا خروجی اسکن کامل")
+            self.scan_failed.emit(f"اسکن جمع‌آوری شد اما ثبت نهایی ناموفق بود: {exc}")
+            return
 
-        # آماده‌سازی لیست مرتب‌شده برای خروجی Word
-        self.progress_changed.emit(92, "در حال نگارش و تولید فایل Word با قالب‌بندی راست‌به‌چپ...")
-
-        all_entries_list = list(store.values())
-        if newly_scraped:
-            new_ids = {e["dec_no_id"] for e in newly_scraped}
-            older_items = [e for e in all_entries_list if e["dec_no_id"] not in new_ids]
-            ordered_for_docx = newly_scraped + older_items
-        else:
-            ordered_for_docx = all_entries_list
-
-        logger.info(f"تولید فایل Word در مسیر: {self.docx_path} با {len(ordered_for_docx)} اظهارنامه...")
-        auth_session = get_authenticated_session()
-        try:
-            export_declarations_to_word(
-                declarations=ordered_for_docx,
-                output_path=self.docx_path,
-                session=auth_session,
-                progress_callback=lambda cur, tot: self.progress_changed.emit(
-                    min(99, 92 + int((cur / max(1, tot)) * 7)),
-                    f"تعبیه تصاویر و پیوندها در Word ({cur}/{tot})..."
-                )
-            )
-            logger.info(f"فایل Word با موفقیت ایجاد گردید: {self.docx_path}")
-        except Exception as e:
-            logger.error(f"خطا در ایجاد خروجی Word: {e}")
-
-        self.progress_changed.emit(100, f"تکمیل شد! {new_count} مورد جدید افزوده شد.")
-        self.scan_completed.emit(len(store), new_count, alerts_count, self.docx_path)
+        message = (f"تکمیل شد! {new_count} مورد جدید افزوده شد." if self.mode == "new_only"
+                   else f"اسکن کامل تکمیل شد! {len(store)} رکورد به‌روزرسانی شد.")
+        self.progress_changed.emit(100, message)
+        self.scan_completed.emit(len(store), new_count, 0, self.docx_path)
 

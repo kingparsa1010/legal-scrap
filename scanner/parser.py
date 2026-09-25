@@ -14,10 +14,24 @@ PERSIAN_DIGITS_TABLE = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
 
 
 def to_english_digits(text: str) -> str:
-    """تبدیل اعداد فارسی و عربی به ارقام انگلیسی."""
+    """تبدیل ارقام فارسی/عربی به انگلیسی."""
     if not text:
         return ""
     return str(text).translate(PERSIAN_DIGITS_TABLE)
+
+
+def is_rejected_status(status: str) -> bool:
+    """وضعیت پرونده رد شده یا ابطال شده است؟ (مبنای واحد برای همه ماژول‌ها)"""
+    if not status:
+        return False
+    return ('رد شده' in status) or ('ابطال' in status)
+
+
+def is_finally_registered(status: str) -> bool:
+    """وضعیت پرونده «ثبت قطعی شده» است؟ — مبنای تب ACTIVE ONLY."""
+    if not status:
+        return False
+    return 'ثبت قطعی شده' in status
 
 
 def parse_classes(class_str: str) -> List[int]:
@@ -85,7 +99,8 @@ def parse_search_results(html_content: str) -> List[Dict[str, Any]]:
                 raw_classes_str = text.split(':', 1)[-1].strip()
                 classes = parse_classes(raw_classes_str)
 
-        is_rejected = 'رد شده' in status
+        is_rejected = is_rejected_status(status)
+        is_active = is_finally_registered(status)
         has_class_5 = 5 in classes
 
         records.append({
@@ -94,6 +109,7 @@ def parse_search_results(html_content: str) -> List[Dict[str, Any]]:
             'declaration_date': dec_date,
             'status': status,
             'is_rejected': is_rejected,
+            'is_active': is_active,
             'classes': classes,
             'classes_str': raw_classes_str or ','.join(map(str, classes)),
             'has_class_5': has_class_5,
@@ -102,3 +118,78 @@ def parse_search_results(html_content: str) -> List[Dict[str, Any]]:
         })
 
     return records
+
+
+def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
+    """تجزیه HTML جدول اظهارنامه‌ها و استخراج ستون‌ها."""
+    soup = BeautifulSoup(html, "html.parser")
+    tbody = soup.find("tbody", id="DataList")
+    if not tbody:
+        return []
+
+    rows = []
+    for tr in tbody.find_all("tr", recursive=False):
+        tds = tr.find_all("td", recursive=False)
+        if len(tds) < 8:
+            continue
+
+        row_num = tds[0].get_text(strip=True)
+
+        img_a = tds[1].find("a")
+        image_url = img_a["href"].strip() if img_a and img_a.has_attr("href") else ""
+
+        dec_a = tds[2].find("a")
+        dec_no_display = dec_a.get_text(strip=True) if dec_a else tds[2].get_text(strip=True)
+        detail_url = dec_a["href"].strip() if dec_a and dec_a.has_attr("href") else ""
+        if detail_url.startswith("/"):
+            detail_url = f"https://ipm.ssaa.ir{detail_url}"
+        elif detail_url and not detail_url.startswith("http"):
+            detail_url = f"https://ipm.ssaa.ir/{detail_url}"
+        m = re.search(r"DecNo=(\d+)", detail_url)
+        dec_no_id = m.group(1) if m else to_english_digits(dec_no_display).strip()
+
+        title = tds[3].get_text(strip=True)
+        office = tds[4].get_text(strip=True)
+
+        owner_b = tds[5].find("b")
+        percent = ""
+        owner_name = ""
+        if owner_b:
+            percent_i = owner_b.find("i")
+            percent = percent_i.get_text(strip=True) if percent_i else ""
+            owner_name = owner_b.get_text(separator=" ", strip=True)
+            if percent:
+                owner_name = owner_name.replace(percent, "").strip()
+        else:
+            owner_name = tds[5].get_text(strip=True)
+
+        date_text = tds[6].get_text(separator="|", strip=True)
+        date_parts = [p for p in date_text.split("|") if p]
+        reg_date = date_parts[0] if len(date_parts) > 0 else ""
+        reg_time = date_parts[1] if len(date_parts) > 1 else ""
+
+        status_span = tds[7].find("span")
+        status = status_span.get_text(strip=True) if status_span else tds[7].get_text(strip=True)
+
+        rows.append({
+            "dec_no_id": dec_no_id,
+            "row_num": row_num,
+            "dec_no_display": dec_no_display,
+            "declaration_no": dec_no_display,
+            "title": title,
+            "office": office,
+            "owner_name": owner_name,
+            "owner_percent": percent,
+            "reg_date": reg_date,
+            "declaration_date": reg_date,
+            "reg_time": reg_time,
+            "status": status,
+            "image_url": image_url,
+            "detail_url": detail_url,
+            "is_rejected": 1 if is_rejected_status(status) else 0,
+            "is_active": 1 if is_finally_registered(status) else 0,
+            "classes": "",
+            "has_class_5": 0,
+        })
+    return rows
+

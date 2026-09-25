@@ -10,14 +10,17 @@ import requests
 import urllib3
 
 from scanner.logger import get_logger
+from scanner.store import (
+    DATA_STORE_PATH, load_store, save_store,
+    load_account_store, save_account_store,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = get_logger("auth")
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from scanner import BASE_DIR as ROOT_DIR
 SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
 ACCOUNTS_DIR = os.path.join(ROOT_DIR, "accounts")
-DATA_STORE_PATH = os.path.join(ROOT_DIR, "data_store.json")
 WORD_OUTPUT_PATH = os.path.join(ROOT_DIR, "brands.docx")
 
 START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
@@ -44,16 +47,11 @@ def has_account_saved_data(user_name: str) -> Tuple[bool, int, str]:
     خروجی: (آیا داده موجود است؟، تعداد رکوردها، تاریخ آخرین اسکن)
     """
     acc_dir = get_account_dir(user_name)
-    store_file = os.path.join(acc_dir, "data_store.json")
     meta_file = os.path.join(acc_dir, "meta.json")
 
-    if not os.path.exists(store_file):
-        return False, 0, ""
-
     try:
-        with open(store_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            count = len(data)
+        data = load_account_store(user_name)
+        count = len(data)
 
         last_date = ""
         if os.path.exists(meta_file):
@@ -73,13 +71,11 @@ def save_account_data(user_name: str, store: Dict[str, Any], docx_path: str = ""
         return
 
     acc_dir = get_account_dir(user_name)
-    acc_store = os.path.join(acc_dir, "data_store.json")
     acc_meta = os.path.join(acc_dir, "meta.json")
 
     try:
-        # ۱. ذخیره data_store.json
-        with open(acc_store, "w", encoding="utf-8") as f:
-            json.dump(store, f, ensure_ascii=False, indent=2)
+        # ۱. ذخیره در فضای حساب داخل پایگاه داده واحد
+        save_account_store(user_name, store)
 
         # ۲. کپی فایل Word در صورت وجود
         if docx_path and os.path.exists(docx_path):
@@ -103,19 +99,11 @@ def save_account_data(user_name: str, store: Dict[str, Any], docx_path: str = ""
 def restore_account_data(user_name: str) -> Tuple[Dict[str, Any], str]:
     """بازیابی داده‌های ذخیره‌شده حساب به فایل‌های فعال برنامه."""
     acc_dir = get_account_dir(user_name)
-    acc_store = os.path.join(acc_dir, "data_store.json")
     acc_docx = os.path.join(acc_dir, "brands.docx")
 
-    store = {}
-    if os.path.exists(acc_store):
-        try:
-            with open(acc_store, "r", encoding="utf-8") as f:
-                store = json.load(f)
-            # رونوشت به data_store فعال ریشه
-            with open(DATA_STORE_PATH, "w", encoding="utf-8") as f:
-                json.dump(store, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"خطا در بازیابی data_store: {e}")
+    store = load_account_store(user_name)
+    if store:
+        save_store(store, DATA_STORE_PATH)
 
     restored_docx = ""
     if os.path.exists(acc_docx):

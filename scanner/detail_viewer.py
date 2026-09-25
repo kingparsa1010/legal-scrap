@@ -12,7 +12,7 @@ import webbrowser
 import webview
 
 # تنظیم مسیر ریشه پروژه
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from scanner import BASE_DIR as ROOT_DIR
 SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
 
 

@@ -90,7 +90,8 @@ def add_hyperlink(paragraph, url: str, text: str, size: int = 9, color_hex: str 
     paragraph._p.append(hyperlink)
 
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cache", "images")
+from scanner import BASE_DIR
+CACHE_DIR = os.path.join(BASE_DIR, ".cache", "images")
 
 
 def download_image(url: str, session: Optional[requests.Session] = None, allow_network: bool = True) -> Optional[bytes]:
@@ -195,9 +196,9 @@ def export_declarations_to_word(
         # اگر در ارزیابی شباهت بالا یا متوسط داشت، رنگ شاخص بگیرد
         sim_score = float(item.get("similarity_score") or 0.0)
         risk_level = str(item.get("risk_level") or "").lower()
-        if "high" in risk_level or sim_score >= 80.0:
+        if "high" in risk_level or sim_score >= 85.0:
             bg_color = "FEE2E2"  # قرمز بسیار ملایم
-        elif "medium" in risk_level or sim_score >= 65.0:
+        elif "medium" in risk_level or sim_score >= 70.0:
             bg_color = "FEF3C7"  # کهربایی ملایم
 
         for c in row_cells:
@@ -238,12 +239,12 @@ def export_declarations_to_word(
         p_title.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         title_text = item.get("title", "") or "(بدون عنوان)"
         add_rtl_run(p_title, title_text, bold=True, size=9)
-        if sim_score >= 65.0 and item.get("matched_brand"):
+        if sim_score >= 70.0 and item.get("matched_brand"):
             p_sub_sim = p_title.add_run(f"\n[شباهت {sim_score}% با {item.get('matched_brand')}]")
             p_sub_sim.font.name = "Tahoma"
             p_sub_sim.font.size = Pt(7.5)
             p_sub_sim.bold = True
-            p_sub_sim.font.color.rgb = RGBColor(185, 28, 28) if sim_score >= 80 else RGBColor(180, 83, 9)
+            p_sub_sim.font.color.rgb = RGBColor(185, 28, 28) if sim_score >= 85 else RGBColor(180, 83, 9)
 
         # ۴. شماره اظهارنامه / رهگیری
         p_dec = row_cells[3].paragraphs[0]

@@ -87,7 +87,7 @@ class TrademarkSimilarityEngine:
     موتور ارزیابی میزان شباهت و تشخیص ریسک نقض علامت تجاری
     """
 
-    def __init__(self, high_threshold: float = 80.0, medium_threshold: float = 65.0):
+    def __init__(self, high_threshold: float = 85.0, medium_threshold: float = 70.0):
         self.high_threshold = high_threshold
         self.medium_threshold = medium_threshold
 
@@ -110,9 +110,11 @@ class TrademarkSimilarityEngine:
         cand_clean = remove_stopwords(cand_norm)
         targ_clean = remove_stopwords(targ_norm)
 
-        # اگر عین کلمه هدف داخل نام کاندید باشد
-        if targ_clean in cand_clean or targ_norm in cand_norm:
-            # کلمه هدف دقیقاً در عنوان وجود دارد
+        # تطابق دربرگیری فقط روی مرز واژه و برای نام‌های معنادار پذیرفته می‌شود.
+        # این شرط از امتیاز ۹۵ برای زیررشته‌های کوتاه مانند «ما» جلوگیری می‌کند.
+        target_tokens = [token for token in targ_clean.split() if len(token) >= 3]
+        candidate_tokens = set(cand_clean.split())
+        if target_tokens and all(token in candidate_tokens for token in target_tokens):
             return 95.0
 
         # ۲. مقایسه فازی مستقیم
@@ -139,9 +141,17 @@ class TrademarkSimilarityEngine:
 
         final_score = max(
             lexical_score * 0.6 + phonetic_score * 0.4,
-            phonetic_score,
+            phonetic_score * 0.95,
             ratio_en
         )
+
+        # نام‌های بسیار کوتاه به‌طور طبیعی شباهت تصادفی زیادی دارند؛ مگر در
+        # تطابق دقیق، امتیاز آن‌ها محافظه‌کارانه محدود می‌شود.
+        shortest = min(len(cand_clean.replace(" ", "")), len(targ_clean.replace(" ", "")))
+        if shortest <= 2:
+            final_score = min(final_score, 55.0)
+        elif shortest == 3:
+            final_score = min(final_score, 78.0)
 
         return round(min(100.0, float(final_score)), 1)
 

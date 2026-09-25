@@ -8,7 +8,13 @@ import logging
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
-LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+def _get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+BASE_DIR = _get_base_dir()
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
 DEFAULT_LOG_FILE = os.path.join(LOGS_DIR, "app.log")
 
 # سطوح لاگ معتبر

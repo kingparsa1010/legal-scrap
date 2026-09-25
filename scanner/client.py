@@ -2,12 +2,14 @@
 کلاینت ارتباط مستقیم با وب‌سرویس سامانه مالکیت معنوی (SSAA)
 Direct HTTP Client for ipm.ssaa.ir
 """
+import os
 import random
 import json
 import re
 import urllib3
 from typing import Dict, Any, Tuple, Optional
 import requests
+from scanner.parser import to_english_digits
 
 # غیرفعال‌سازی هشدارهای SSL در صورت بروز مشکل گواهی سرورهای داخلی
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -16,6 +18,18 @@ BASE_URL = "https://ipm.ssaa.ir"
 SEARCH_PAGE_URL = f"{BASE_URL}/Issue-IssueTrademark"
 CAPTCHA_URL = f"{BASE_URL}/Captcha"
 SEARCH_ENDPOINT = f"{BASE_URL}/serv/Issue-Trademark.Sabt"
+
+
+def _clean_field(val: Any, is_digit: bool = False) -> Optional[str]:
+    """پاکسازی مقادیر فرم، تبدیل به رشته و در صورت نیاز تبدیل ارقام فارسی به انگلیسی."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    if is_digit:
+        s = to_english_digits(s)
+    return s
 
 
 class SSAAConnectionError(Exception):
@@ -88,26 +102,27 @@ class SSAAClient:
     def build_search_payload(self, params: Dict[str, Any]) -> str:
         """
         ساخت دیکشنری پارامترهای جستجو منطبق بر تابع ser('.EXCol') سامانه
+        همراه با تبدیل ارقام فارسی به انگلیسی برای سازگاری با پایگاه داده ثبت.
         """
         sobject = {
-            "FromIssueDate": params.get("FromIssueDate") or None,
-            "ToIssueDate": params.get("ToIssueDate") or None,
-            "ItemTitle": params.get("ItemTitle") or None,
+            "FromIssueDate": _clean_field(params.get("FromIssueDate"), is_digit=True),
+            "ToIssueDate": _clean_field(params.get("ToIssueDate"), is_digit=True),
+            "ItemTitle": _clean_field(params.get("ItemTitle")),
             "SearchItemTitleAsLike": str(params.get("SearchItemTitleAsLike", "3")),
-            "SignProductId": str(params.get("SignProductId", "5")),
-            "SignImageStage": params.get("SignImageStage") or None,
-            "RegisterNo": params.get("RegisterNo") or None,
-            "DeclarationNo": params.get("DeclarationNo") or None,
-            "ManualNo": params.get("ManualNo") or None,
-            "FromDeclarationDateRange": params.get("FromDeclarationDateRange") or None,
-            "ToDeclarationDateRange": params.get("ToDeclarationDateRange") or None,
+            "SignProductId": _clean_field(params.get("SignProductId", "5"), is_digit=True) or "5",
+            "SignImageStage": _clean_field(params.get("SignImageStage")),
+            "RegisterNo": _clean_field(params.get("RegisterNo"), is_digit=True),
+            "DeclarationNo": _clean_field(params.get("DeclarationNo"), is_digit=True),
+            "ManualNo": _clean_field(params.get("ManualNo"), is_digit=True),
+            "FromDeclarationDateRange": _clean_field(params.get("FromDeclarationDateRange"), is_digit=True),
+            "ToDeclarationDateRange": _clean_field(params.get("ToDeclarationDateRange"), is_digit=True),
             "personType": str(params.get("personType", "1")),
-            "RealOwnerName": params.get("RealOwnerName") or None,
-            "RealOwnerFamily": params.get("RealOwnerFamily") or None,
-            "RealOwnerNationalityCode": params.get("RealOwnerNationalityCode") or None,
-            "LegalOwnerRecordNo": params.get("LegalOwnerRecordNo") or None,
-            "LegalOwnerNationalityNo": params.get("LegalOwnerNationalityNo") or None,
-            "GetCurrentIssue": False
+            "RealOwnerName": _clean_field(params.get("RealOwnerName")),
+            "RealOwnerFamily": _clean_field(params.get("RealOwnerFamily")),
+            "RealOwnerNationalityCode": _clean_field(params.get("RealOwnerNationalityCode"), is_digit=True),
+            "LegalOwnerRecordNo": _clean_field(params.get("LegalOwnerRecordNo"), is_digit=True),
+            "LegalOwnerNationalityNo": _clean_field(params.get("LegalOwnerNationalityNo"), is_digit=True),
+            "GetCurrentIssue": bool(params.get("GetCurrentIssue", False))
         }
         return json.dumps(sobject, ensure_ascii=False)
 
@@ -127,6 +142,9 @@ class SSAAClient:
             "data": data_json,
             "captcha": str(captcha_val).strip()
         }
+        # برای آگهی‌های روز جاری / شماره جاری، سامانه پارامتر oninit: true را نیز ارسال می‌کند
+        if params.get("GetCurrentIssue"):
+            payload["oninit"] = "true"
 
         try:
             resp = self.session.post(
@@ -169,9 +187,9 @@ class SSAAClient:
 
         # استخراج تعداد کل از متن پاسخ در صورت وجود
         total_records = 0
-        match = re.search(r'id=["\']tResult["\'][^>]*>([\d,]+)<', html)
+        match = re.search(r'id=["\']tResult["\'][^>]*>([\d,۰-۹]+)<', html)
         if match:
-            total_str = match.group(1).replace(',', '')
+            total_str = to_english_digits(match.group(1)).replace(',', '')
             try:
                 total_records = int(total_str)
             except ValueError:
@@ -200,6 +218,8 @@ class SSAAClient:
             "extra": str(page_num),
             "tRecords": str(total_records) if total_records > 0 else ""
         }
+        if params.get("GetCurrentIssue"):
+            body_data["oninit"] = "true"
 
         try:
             resp = self.session.post(

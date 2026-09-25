@@ -8,11 +8,15 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-DB_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scans.db')
+from scanner import BASE_DIR
+
+DB_FILE = os.path.join(BASE_DIR, 'scans.db')
 
 
 def get_connection(db_path: str = DB_FILE) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -21,6 +25,23 @@ def init_db(db_path: str = DB_FILE):
     """ایجاد جداول و داده‌های پیش‌فرض در صورت عدم وجود."""
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
+
+        # مخزن جاری و مرجع برنامه؛ JSON فقط برای مهاجرت نسخه‌های قدیمی است.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS record_store (
+                bucket TEXT NOT NULL,
+                record_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (bucket, record_key)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS store_meta (
+                meta_key TEXT PRIMARY KEY,
+                meta_value TEXT NOT NULL
+            )
+        ''')
 
         # ۱. جدول برندهای تحت حفاظت شرکت
         cursor.execute('''
@@ -56,6 +77,7 @@ def init_db(db_path: str = DB_FILE):
                 declaration_date TEXT,
                 status TEXT,
                 is_rejected INTEGER,
+                is_active INTEGER DEFAULT 0,
                 classes TEXT,
                 has_class_5 INTEGER,
                 image_url TEXT,
@@ -66,6 +88,12 @@ def init_db(db_path: str = DB_FILE):
                 FOREIGN KEY(scan_id) REFERENCES scans(id)
             )
         ''')
+
+        # مهاجرت ستون is_active برای دیتابیس‌های قدیمی
+        cursor.execute("PRAGMA table_info(declarations)")
+        decl_columns = {row[1] for row in cursor.fetchall()}
+        if 'is_active' not in decl_columns:
+            cursor.execute('ALTER TABLE declarations ADD COLUMN is_active INTEGER DEFAULT 0')
 
         # ۴. جدول تاریخچه جستجوها
         cursor.execute('''
@@ -122,14 +150,22 @@ def delete_watchlist_item(item_id: int, db_path: str = DB_FILE) -> bool:
 
 # --- توابع مدیریت اسکن‌ها و ذخیره رکوردها ---
 
-def create_scan_session(scan_date: str, search_params: Dict[str, Any], db_path: str = DB_FILE) -> int:
+def create_scan_session(
+    scan_date: str,
+    search_params: Dict[str, Any],
+    total_records: int = 0,
+    class5_count: int = 0,
+    alerts_count: int = 0,
+    db_path: str = DB_FILE
+) -> int:
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute(
             'INSERT INTO scans (scan_date, search_params, total_records, class5_count, alerts_count, created_at) '
-            'VALUES (?, ?, 0, 0, 0, ?)',
-            (scan_date, json.dumps(search_params, ensure_ascii=False), now)
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (scan_date, json.dumps(search_params, ensure_ascii=False),
+             total_records, class5_count, alerts_count, now)
         )
         conn.commit()
         return cursor.lastrowid
@@ -150,6 +186,7 @@ def save_declarations_batch(scan_id: int, declarations: List[Dict[str, Any]], db
                 d.get('declaration_date', ''),
                 d.get('status', ''),
                 1 if d.get('is_rejected') else 0,
+                1 if d.get('is_active') else 0,
                 classes_str,
                 1 if d.get('has_class_5') else 0,
                 d.get('image_url', ''),
@@ -161,8 +198,9 @@ def save_declarations_batch(scan_id: int, declarations: List[Dict[str, Any]], db
         cursor.executemany('''
             INSERT INTO declarations (
                 scan_id, title, declaration_no, declaration_date, status, is_rejected,
-                classes, has_class_5, image_url, detail_url, matched_brand, similarity_score, risk_level
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_active, classes, has_class_5, image_url, detail_url,
+                matched_brand, similarity_score, risk_level
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', rows)
         conn.commit()
 
@@ -190,6 +228,7 @@ def get_all_scans(db_path: str = DB_FILE) -> List[Dict[str, Any]]:
 def get_scan_declarations(scan_id: int, filter_type: str = 'all', db_path: str = DB_FILE) -> List[Dict[str, Any]]:
     """
     دریافت رکوردهای یک نوبت اسکن:
+    - 'active': موارد نهایی‌شده (ثبت قطعی شده)
     - 'alerts': موارد فعال با ریسک شباهت بالا یا متوسط (غیر رد شده)
     - 'class5': موارد دارای طبقه ۵
     - 'rejected': موارد رد شده
@@ -200,7 +239,9 @@ def get_scan_declarations(scan_id: int, filter_type: str = 'all', db_path: str =
         query = 'SELECT * FROM declarations WHERE scan_id = ?'
         params = [scan_id]
 
-        if filter_type == 'alerts':
+        if filter_type == 'active':
+            query += " AND is_active = 1 ORDER BY id DESC"
+        elif filter_type == 'alerts':
             query += " AND is_rejected = 0 AND risk_level IN ('high', 'medium') ORDER BY similarity_score DESC"
         elif filter_type == 'class5':
             query += " AND has_class_5 = 1 ORDER BY is_rejected ASC, id DESC"
