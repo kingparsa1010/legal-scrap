@@ -68,6 +68,18 @@ def run_build():
         "--hidden-import", "requests",
         "--hidden-import", "urllib3",
         "--hidden-import", "bs4",
+        "--hidden-import", "scanner",
+        "--hidden-import", "scanner.login_window",
+        "--hidden-import", "scanner.detail_viewer",
+        "--hidden-import", "scanner.auth",
+        "--hidden-import", "scanner.store",
+        "--hidden-import", "scanner.comparator",
+        "--hidden-import", "scanner.database",
+        "--hidden-import", "scanner.exporter",
+        "--hidden-import", "scanner.word_exporter",
+        "--hidden-import", "scanner.worker",
+        "--hidden-import", "scanner.declaration_worker",
+        "--hidden-import", "services",
         # جمع‌آوری تمپلیت‌ها و فایل‌های دیتای وب‌ویو بدون اسکن ماژول‌های اندروید/مک
         "--collect-data", "webview",
         # حذف ماژول‌های سیستم‌عامل‌های دیگر برای جلوگیری از هشدارهای ناخواسته (مانند اندروید، لینوکس و مک)

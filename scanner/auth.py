@@ -262,14 +262,28 @@ def perform_browser_login(timeout_seconds: int = 360, on_status_update=None) -> 
     if on_status_update:
         on_status_update(msg)
 
-    login_script = os.path.join(ROOT_DIR, "scanner", "login_window.py")
-    if not os.path.exists(login_script):
-        logger.error(f"اسکریپت لاگین یافت نشد: {login_script}")
-        return False, "اسکریپت ورود به سامانه موجود نیست."
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    if ROOT_DIR not in env.get("PYTHONPATH", "").split(os.pathsep):
+        env["PYTHONPATH"] = f"{ROOT_DIR}{os.pathsep}{env.get('PYTHONPATH', '')}".strip(os.pathsep)
+
+    # تعیین دستور فرآیند فرزند برای اجرای پنجره ورود
+    if getattr(sys, 'frozen', False):
+        # در فایل اجرایی کامپایل‌شده (EXE):
+        # مستقیماً خود فایل اجرایی با سوییچ --login فراخوانی می‌شود
+        cmd = [sys.executable, '--login']
+    else:
+        # در حالت سورس پایتون:
+        main_script = os.path.join(ROOT_DIR, "main.py")
+        login_script = os.path.join(ROOT_DIR, "scanner", "login_window.py")
+        if os.path.exists(main_script):
+            cmd = [sys.executable, main_script, '--login']
+        elif os.path.exists(login_script):
+            cmd = [sys.executable, login_script]
+        else:
+            cmd = [sys.executable, "-m", "scanner.login_window"]
 
     try:
-        # اجرای اسکریپت پنجره لاگین در فرآیند فرزند مستقل
-        cmd = [sys.executable, login_script]
         logger.info(f"اجرای فرآیند پنجره لاگین: {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd,
@@ -277,14 +291,17 @@ def perform_browser_login(timeout_seconds: int = 360, on_status_update=None) -> 
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
-            errors="replace"
+            errors="replace",
+            cwd=ROOT_DIR,
+            env=env
         )
 
         stdout, stderr = proc.communicate(timeout=timeout_seconds)
 
         if proc.returncode != 0 and not os.path.exists(SESSION_FILE):
-            logger.warning(f"خطا در اجرای پنجره ورود: {stderr}")
-            return False, f"خطا در باز کردن پنجره ورود: {stderr.strip()[:200]}"
+            logger.warning(f"خطا در اجرای پنجره ورود (کد {proc.returncode}): {stderr}")
+            err_msg = stderr.strip() if stderr.strip() else f"کد خروجی: {proc.returncode}"
+            return False, f"خطا در باز کردن پنجره ورود: {err_msg[:200]}"
 
         # بررسی نتایج استخراج شده در session_auth.json
         if os.path.exists(SESSION_FILE):

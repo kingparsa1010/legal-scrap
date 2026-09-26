@@ -68,6 +68,7 @@ venv.bak/
 # IDEs and Editors
 .idea/
 .vscode/
+.freebuff/
 *.sublime-workspace
 *.sublime-project
 *.swp

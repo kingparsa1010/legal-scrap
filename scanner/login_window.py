@@ -4,6 +4,13 @@ Native Windows WebView2 Login Window for ipm.ssaa.ir (Zero Playwright / Zero Chr
 """
 import sys
 import os
+
+# اطمینان از دسترسی به ماژول‌های پروژه حتی در صورت اجرای مستقیم به عنوان اسکریپت
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_parent_dir = os.path.dirname(_current_dir)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
 import time
 import json
 import re

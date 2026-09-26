@@ -4,9 +4,18 @@
 """
 import sys
 import os
+import json
 
 # اطمینان از قرارگیری مسیر ریشه پروژه در PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+# پشتیبانی از باز کردن پنجره لاگین در فرآیند فرزند مستقل (هم فایل EXE و هم سورس کد)
+if len(sys.argv) > 1 and sys.argv[1] == '--login':
+    from scanner.login_window import run_login
+    res = run_login()
+    print("\n---RESULT---")
+    print(json.dumps(res, ensure_ascii=False))
+    sys.exit(0)
 
 # پشتیبانی از باز کردن پنجره WebView2 در حالت فایل کامپایل‌شده (EXE)
 if len(sys.argv) > 1 and sys.argv[1] == '--view-detail':

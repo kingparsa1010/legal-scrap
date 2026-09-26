@@ -2188,11 +2188,17 @@ class TrademarkApp(QMainWindow):
                 return
 
             # در حالت اجرای عادی پایتون (سورس‌کد)
-            viewer_script = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "scanner", "detail_viewer.py"
-            )
-            if os.path.exists(viewer_script):
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            main_script = os.path.join(root_dir, "main.py")
+            viewer_script = os.path.join(root_dir, "scanner", "detail_viewer.py")
+
+            if os.path.exists(main_script):
+                subprocess.Popen(
+                    [sys.executable, main_script, '--view-detail', url, title or "مشاهده پرونده"],
+                    shell=False
+                )
+                return
+            elif os.path.exists(viewer_script):
                 subprocess.Popen(
                     [sys.executable, viewer_script, url, title or "مشاهده پرونده"],
                     shell=False
