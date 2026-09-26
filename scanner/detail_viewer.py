@@ -293,7 +293,7 @@ if __name__ == "__main__":
     brand_title = sys.argv[2] if len(sys.argv) > 2 else "مشاهده پرونده"
 
     if not target_url:
-        print("خطا: آدرس اینترنتی پرونده مشخص نشده است.")
+        print("Error: Target declaration URL is required.")
         sys.exit(1)
 
     open_detail_viewer(target_url, brand_title)

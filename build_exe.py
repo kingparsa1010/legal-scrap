@@ -18,26 +18,26 @@ def prepare_icon(assets_dir: str) -> str:
             # ذخیره با ابعاد چندگانه برای نمایش شفاف در دسکتاپ و تسک‌بار
             icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
             img.save(ico_path, format="ICO", sizes=icon_sizes)
-            print("[✓] آیکون logo.ico با موفقیت از logo.png ساخته شد.")
+            print("[+] logo.ico generated successfully from logo.png.")
         except Exception as e:
-            print(f"[!] ساخت آیکون با خطا مواجه شد: {e}")
+            print(f"[!] Failed to generate icon: {e}")
 
     return ico_path if os.path.exists(ico_path) else ""
 
 
 def run_build():
     print("=" * 65)
-    print("  شروع فرآیند بیلد تک‌فایل اجرایی پرتابل و مستقل (LegalScrap.exe)")
+    print("  Building Single-file Portable Executable (LegalScrap.exe)")
     print("=" * 65)
 
     # ۱. بررسی و نصب PyInstaller در صورت نیاز
     try:
         import PyInstaller
-        print(f"[✓] PyInstaller شناسایی شد (نسخه {PyInstaller.__version__})")
+        print(f"[+] PyInstaller found (v{PyInstaller.__version__})")
     except ImportError:
-        print("[!] PyInstaller نصب نیست. در حال نصب خودکار با pip...")
+        print("[!] PyInstaller not found. Installing via pip...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-        print("[✓] PyInstaller با موفقیت نصب شد.")
+        print("[+] PyInstaller installed successfully.")
 
     root_dir = os.path.dirname(os.path.abspath(__file__))
     assets_dir = os.path.join(root_dir, "assets")
@@ -96,7 +96,7 @@ def run_build():
     # ۴. ست کردن آیکون رسمی برنامه برای فایل EXE
     if ico_path:
         cmd.extend(["--icon", ico_path])
-        print(f"[✓] آیکون فایل EXE تنظیم شد: {ico_path}")
+        print(f"[+] EXE icon configured: {ico_path}")
 
     # ۵. افزودن پوشه assets به همراه لوگوها به داخل فایل نهایی
     if os.path.exists(assets_dir):
@@ -105,19 +105,19 @@ def run_build():
     # نقطه ورود اصلی پروژه
     cmd.append("main.py")
 
-    print("\n[+] در حال کامپایل و فشرده‌سازی فایل اجرایی... (لطفاً صبور باشید)")
+    print("\n[+] Compiling and packaging executable... (please wait)")
     result = subprocess.run(cmd, cwd=root_dir)
 
     if result.returncode == 0:
         exe_path = os.path.join(root_dir, "dist", "LegalScrap.exe")
         print("\n" + "=" * 65)
-        print(" [✓] عملیات با موفقیت انجام شد!")
-        print(f" فایل نهایی شما آماده است در مسیر:")
+        print(" [+] Build completed successfully!")
+        print(f" Output executable:")
         print(f" {exe_path}")
         print("=" * 65)
-        print("این تک‌فایل شامل لوگوی اختصاصی بوده و روی هر ویندوز ۱۰ و ۱۱ بدون نیاز به پایتون کار می‌کند.")
+        print("Standalone executable is ready for Windows 10/11.")
     else:
-        print("\n[✗] خطا در زمان بیلد فایل اجرایی.")
+        print("\n[-] Error occurred during executable build.")
 
 
 if __name__ == "__main__":

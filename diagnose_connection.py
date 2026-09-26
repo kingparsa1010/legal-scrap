@@ -32,38 +32,38 @@ logger = get_logger("diagnostic")
 
 def print_step(title: str):
     print("\n" + "=" * 65)
-    print(f"  🔍 {title}")
+    print(f"  [>] {title}")
     print("=" * 65)
 
 
 def test_dns_and_socket():
-    print_step("مرحله ۱: بررسی DNS و اتصال شبکه (Socket & TLS)")
+    print_step("Step 1: Checking DNS & Network Socket (Socket & TLS)")
     host = "ipm.ssaa.ir"
     port = 443
 
-    # ۱. تحلیل DNS
+    # 1. DNS Resolution
     try:
         ip_list = socket.gethostbyname_ex(host)[2]
-        print(f"✅ تحلیل DNS موفقیت‌آمیز بود. آی‌پی‌های سرور: {', '.join(ip_list)}")
+        print(f"[+] DNS resolution successful. Resolved IPs: {', '.join(ip_list)}")
         logger.info(f"DNS resolved {host} -> {ip_list}")
     except Exception as e:
-        print(f"❌ خطا در تحلیل DNS: {e}")
+        print(f"[-] DNS resolution failed: {e}")
         logger.error(f"DNS resolution failed: {e}")
         return False
 
-    # ۲. برقراری سوکت TCP
+    # 2. TCP Socket Connection
     try:
         t0 = time.time()
         sock = socket.create_connection((host, port), timeout=10)
         t_conn = time.time() - t0
-        print(f"✅ اتصال TCP سوکت به پورت ۴۴۳ برقرار شد (زمان: {t_conn:.2f} ثانیه)")
+        print(f"[+] TCP socket connection to port 443 established ({t_conn:.2f}s)")
         logger.info(f"TCP socket established in {t_conn:.2f}s")
     except Exception as e:
-        print(f"❌ برقراری اتصال TCP ناموفق بود: {e}")
+        print(f"[-] TCP connection failed: {e}")
         logger.error(f"TCP socket failed: {e}")
         return False
 
-    # ۳. دست‌تکانی امنیتی TLS/SSL
+    # 3. TLS/SSL Handshake
     try:
         context = ssl.create_default_context()
         t0 = time.time()
@@ -71,10 +71,10 @@ def test_dns_and_socket():
             t_ssl = time.time() - t0
             cipher = ssock.cipher()
             version = ssock.version()
-            print(f"✅ دست‌تکانی امنیتی TLS برقرار شد (نسخه: {version}، رمزگذاری: {cipher[0]}، زمان: {t_ssl:.2f} ثانیه)")
+            print(f"[+] TLS handshake established (version: {version}, cipher: {cipher[0]}, time: {t_ssl:.2f}s)")
             logger.info(f"TLS handshake success: {version}, {cipher}")
     except Exception as e:
-        print(f"⚠️ دست‌تکانی TLS به صورت استاندارد رد شد یا مسدود گردید: {e}")
+        print(f"[!] Standard TLS handshake warning/bypass: {e}")
         logger.warning(f"TLS handshake warning: {e}")
         return True
 
@@ -82,58 +82,58 @@ def test_dns_and_socket():
 
 
 def test_webview2_environment():
-    print_step("مرحله ۲: بررسی محیط Edge WebView2 و کتابخانه PyWebView")
+    print_step("Step 2: Checking Edge WebView2 & PyWebView Environment")
     try:
         import webview
-        print("✅ کتابخانه pywebview با موفقیت بارگذاری شد.")
+        print("[+] pywebview library loaded successfully.")
         try:
             import webview.platforms.winforms as wf
             is_chrom = getattr(wf, "is_chromium", False)
             if is_chrom:
-                print("✅ موتور بومی Microsoft Edge WebView2 ویندوز فعال و آماده به کار است.")
-                print("   (کاملاً مستقل از Google Chrome و بدون نیاز به نصب Playwright)")
+                print("[+] Microsoft Edge WebView2 runtime is active and ready.")
+                print("    (Independent of Google Chrome / No Playwright required)")
             else:
-                print("⚠️ موتور WebView2 گزارش نشد، حالت پیش‌فرض ویندوز فعال است.")
+                print("[!] WebView2 not reported, fallback default engine active.")
         except Exception as e:
-            print(f"ℹ️ اطلاعات موتور وب‌ویو: {e}")
+            print(f"[*] WebView engine info: {e}")
     except ImportError:
-        print("❌ کتابخانه pywebview نصب نیست. لطفاً با دستور 'pip install pywebview' آن را نصب فرمایید.")
+        print("[-] pywebview is not installed. Please run: pip install pywebview")
 
 
 def test_session_files():
-    print_step("مرحله ۳: بررسی فایل‌های نشست و اعتبار لاگین")
+    print_step("Step 3: Checking Session Files & Login Auth")
     has_session = has_saved_session()
     user_name = get_saved_user_name()
     cookies = get_saved_cookies()
 
     if has_session:
-        print(f"✅ فایل نشست موجود است: {SESSION_FILE}")
-        print(f"   • نام کاربر واردشده: {user_name if user_name else 'کاربر سامانه'}")
-        print(f"   • تعداد کوکی‌های ذخیره‌شده: {len(cookies)}")
+        print(f"[+] Session file found: {SESSION_FILE}")
+        print(f"    - Authenticated user: {user_name if user_name else 'System User'}")
+        print(f"    - Cookies stored: {len(cookies)}")
         for k in list(cookies.keys())[:5]:
-            print(f"     - کوکی: {k}")
+            print(f"      * Cookie: {k}")
     else:
-        print(f"⚠️ هنوز هیچ نشستی ذخیره نشده است ({SESSION_FILE} موجود نیست).")
-        print("   کاربر برای اسکن اظهارنامه‌ها باید یک‌بار دکمه «ورود به سامانه» را کلیک کند.")
+        print(f"[!] No active session file found ({SESSION_FILE} does not exist).")
+        print("    Please launch the application and click 'Login to System' first.")
 
     return has_session
 
 
 def test_http_session_request():
-    print_step("مرحله ۴: تست مستقیم ارسال درخواست HTTP به سامانه با نشست فعال")
+    print_step("Step 4: Testing Direct HTTP Session Request to SSAA Portal")
     try:
         import requests
         from bs4 import BeautifulSoup
         session = get_authenticated_session()
-        print(f"🌐 در حال ارسال درخواست HTTP GET به {START_URL} ...")
+        print(f"[*] Sending HTTP GET request to {START_URL} ...")
         t0 = time.time()
         resp = session.get(START_URL, timeout=30, verify=False)
         elapsed = time.time() - t0
 
-        print(f"📊 نتایج پاسخ سرور:")
-        print(f"   • کد وضعیت HTTP: {resp.status_code}")
-        print(f"   • زمان پاسخ‌دهی: {elapsed:.2f} ثانیه")
-        print(f"   • آدرس نهایی: {resp.url}")
+        print(f"[*] Server Response Summary:")
+        print(f"    - HTTP Status Code: {resp.status_code}")
+        print(f"    - Response Time: {elapsed:.2f}s")
+        print(f"    - Final URL: {resp.url}")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         user_elem = soup.select_one("#userData")
@@ -142,28 +142,27 @@ def test_http_session_request():
         has_user = bool(user_elem and user_elem.get_text(strip=True))
         has_table = bool(table_elem)
 
-        print(f"   • وجود شناسه کاربر (#userData): {'✅ بله' if has_user else '❌ خیر'}")
-        print(f"   • وجود جدول اظهارنامه‌ها (#DataList): {'✅ بله' if has_table else '❌ خیر'}")
+        print(f"    - User profile element (#userData): {'[+] Present' if has_user else '[-] Absent'}")
+        print(f"    - Declaration table (#DataList): {'[+] Present' if has_table else '[-] Absent'}")
 
         if has_user:
-            print(f"\n🎉 تبریک! نشست شما کاملاً معتبر و فعال است:")
-            print(f"   مشخصات کاربر: {user_elem.get_text(strip=True)}")
+            print(f"\n[+] Success! Your session is authenticated and valid:")
+            print(f"    User info: {user_elem.get_text(strip=True)}")
         elif has_table:
-            print("\n✅ دسترسی به جدول اظهارنامه‌ها با موفقیت تأیید شد.")
+            print("\n[+] Access to DeclarationList table confirmed successfully.")
         else:
-            print("\n⚠️ نشست ذخیره‌شده در این درخواست شناسایی نشد (ممکن است نیاز به ورود مجدد باشد).")
+            print("\n[!] Saved session was not recognized by the portal (re-login may be required).")
 
     except Exception as e:
-        print(f"❌ خطا در ارسال درخواست HTTP: {e}")
+        print(f"[-] HTTP request error: {e}")
         logger.error(f"HTTP test request failed: {e}")
 
 
 def main():
     print("===============================================================")
-    print("  ابزار تخصصی عیب‌یابی و آزمایش ارتباط با سامانه ثبت اسناد")
     print("  Iranian Intellectual Property (SSAA) Diagnostic Tool")
     print("===============================================================")
-    print("توجه: پیش از اجرای این تست، لطفاً مطمئن شوید که فیلترشکن (VPN) خاموش است.")
+    print("Note: Before running this test, please ensure VPN is turned off.")
 
     net_ok = test_dns_and_socket()
     test_webview2_environment()
@@ -172,10 +171,10 @@ def main():
     if net_ok:
         test_http_session_request()
     else:
-        print("\n❌ به دلیل عدم برقراری اتصال شبکه با ipm.ssaa.ir، ادامه تست لغو شد.")
+        print("\n[-] Network connection to ipm.ssaa.ir failed, aborting remaining tests.")
 
     print("\n" + "=" * 65)
-    print(f"📁 گزارش کامل این عملیات در فایل لاگ ثبت شد: {get_log_file_path()}")
+    print(f"[*] Detailed diagnostic log written to: {get_log_file_path()}")
     print("===============================================================\n")
 
 

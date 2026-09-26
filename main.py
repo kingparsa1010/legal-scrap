@@ -30,8 +30,8 @@ from gui.app import run_app
 
 def main():
     print("==================================================")
-    print("  سامانه پایش هوشمند علائم تجاری (مرکز مالکیت معنوی) ")
-    print("      سازمان ثبت اسناد و املاک کشور       ")
+    print("  Legal Scrap - Trademark Monitoring Engine       ")
+    print("  Iranian Intellectual Property Center (SSAA)     ")
     print("==================================================")
     run_app()
 
