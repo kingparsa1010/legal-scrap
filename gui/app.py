@@ -2136,6 +2136,9 @@ class TrademarkApp(QMainWindow):
             self._refresh_stats()
 
     def _on_mode2_record(self, r: dict, refresh_stats: bool = True):
+        # بررسی قطعی: اگر رکورد طبقه ۵ ندارد، نادیده گرفته شده و در جدول ثبت نمی‌شود
+        if r.get('classes') and not r.get('has_class_5') and 5 not in r.get('classes', []):
+            return
         self._class5 += 1
         self.add_to_table_class5(r)
         if refresh_stats:
@@ -2894,7 +2897,10 @@ class TrademarkApp(QMainWindow):
         store = load_class5_store()
         if not store:
             return
-        c5_records = list(store.values())
+        c5_records = [
+            e for e in store.values()
+            if e.get('has_class_5') or not e.get('classes') or 5 in e.get('classes', [])
+        ]
         self._class5 = len(c5_records)
 
         sorting = self.table_class5.isSortingEnabled()

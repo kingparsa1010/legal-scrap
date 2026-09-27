@@ -10,11 +10,13 @@ from scanner.store import merge_class5_records, save_store
 
 def publish_targeted_scan(scan_id: int, records: Iterable[Dict[str, Any]]) -> tuple[int, int]:
     records = list(records)
-    save_declarations_batch(scan_id, records, db_path=DB_FILE)
-    added = merge_class5_records(records)
-    class5_count = sum(1 for row in records if row.get("has_class_5"))
-    update_scan_stats(scan_id, len(records), class5_count, 0, db_path=DB_FILE)
-    return added, class5_count
+    class5_records = [r for r in records if r.get("has_class_5")]
+    target_records = class5_records if class5_records else records
+    save_declarations_batch(scan_id, target_records, db_path=DB_FILE)
+    added = merge_class5_records(target_records)
+    count = len(target_records)
+    update_scan_stats(scan_id, count, count, 0, db_path=DB_FILE)
+    return added, count
 
 
 def publish_declaration_snapshot(records: Dict[str, Dict[str, Any]]) -> None:

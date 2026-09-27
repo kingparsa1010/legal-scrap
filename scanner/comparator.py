@@ -23,7 +23,10 @@ def compare_stores(
         threshold = engine.medium_threshold
 
     data_entries = [e for e in data_store.values() if e.get("title")]
-    class5_entries = [e for e in class5_store.values() if e.get("title")]
+    class5_entries = [
+        e for e in class5_store.values()
+        if e.get("title") and (e.get("has_class_5") or not e.get("classes") or 5 in e.get("classes", []))
+    ]
     if not data_entries or not class5_entries:
         return []
 

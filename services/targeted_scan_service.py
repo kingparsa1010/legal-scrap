@@ -25,6 +25,17 @@ def _validate_first_page(html: str) -> List[Dict[str, Any]]:
     raise ScanValidationError(f"پاسخ غیرمنتظره از سرور ثبت دریافت شد: «{snippet}»")
 
 
+def _matches_target_class(row: Dict[str, Any], target_class: int = 5) -> bool:
+    """بررسی قطعی تعلق داشتن اظهارنامه به طبقه درخواستی (مثلاً طبقه ۵)."""
+    classes = row.get("classes", [])
+    if isinstance(classes, (list, set, tuple)):
+        if target_class in classes:
+            return True
+    if target_class == 5 and row.get("has_class_5"):
+        return True
+    return False
+
+
 def collect_targeted_scan(
     client,
     params: Dict[str, Any],
@@ -39,6 +50,10 @@ def collect_targeted_scan(
     if is_cancelled():
         return []
 
+    # استخراج شماره طبقه هدف (پیش‌فرض طبقه ۵)
+    raw_class = str(params.get("SignProductId") or "").strip()
+    target_class = int(raw_class) if raw_class.isdigit() else 5
+
     first_page = _validate_first_page(html)
     collected: List[Dict[str, Any]] = []
     seen = set()
@@ -46,6 +61,9 @@ def collect_targeted_scan(
     def add(records):
         added = 0
         for row in records:
+            # رکوردهایی که طبقه مورد نظر (مثلاً ۵) را ندارند، کاملاً نادیده گرفته و حذف می‌شوند
+            if not _matches_target_class(row, target_class):
+                continue
             key = row.get("declaration_no")
             if key and key not in seen:
                 seen.add(key)
@@ -58,14 +76,30 @@ def collect_targeted_scan(
     if not first_page:
         on_progress(100, "جستجو انجام شد: موردی یافت نشد.")
         return collected
-    on_progress(20, f"صفحه ۱ دریافت شد ({len(first_page)} رکورد).")
+    on_progress(20, f"صفحه ۱ پردازش شد ({len(collected)} رکورد معتبر طبقه {target_class}).")
 
     page = 2
+    consecutive_empty = 0
     while page <= max_pages and not is_cancelled():
-        on_progress(min(90, int(20 + (page / max_pages) * 70)), f"در حال استخراج صفحه {page}...")
+        on_progress(min(90, int(20 + (page / max_pages) * 70)), f"در حال استخراج و پالایش صفحه {page}...")
         time.sleep(1.0)
-        page_records = parse_search_results(client.get_page(page, params, captcha, total_records))
-        if not page_records or add(page_records) == 0:
+        raw_html = client.get_page(page, params, captcha, total_records)
+        page_records = parse_search_results(raw_html)
+        if not page_records:
             break
+
+        # جلوگیری از حلقه تکراری در صورتی که سرور صفحه آخر را مکرراً تکرار کند
+        page_keys = [r.get("declaration_no") for r in page_records if r.get("declaration_no")]
+        if page_keys and all(k in seen for k in page_keys):
+            break
+
+        added_now = add(page_records)
+        if added_now == 0:
+            consecutive_empty += 1
+            if consecutive_empty >= 5:
+                break
+        else:
+            consecutive_empty = 0
+
         page += 1
     return collected

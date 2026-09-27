@@ -39,14 +39,24 @@ def parse_classes(class_str: str) -> List[int]:
     if not class_str:
         return []
     en_str = to_english_digits(class_str)
-    # پیدا کردن همه دنباله‌های عددی
-    nums = re.findall(r'\d+', en_str)
-    result = []
-    for n in nums:
+    result = set()
+
+    # ۱. بررسی محدوده‌ها مانند ۱ تا ۵ یا ۱-۵ یا ۱ الی ۵
+    for match in re.finditer(r'(\d+)\s*(?:-|تا|الی)\s*(\d+)', en_str):
+        try:
+            start_c, end_c = int(match.group(1)), int(match.group(2))
+            if 1 <= start_c <= end_c <= 45:
+                for c in range(start_c, end_c + 1):
+                    result.add(c)
+        except ValueError:
+            pass
+
+    # ۲. پیدا کردن همه اعداد مجزا (طبقات معتبر ۱ تا ۴۵ علائم تجاری)
+    for n in re.findall(r'\d+', en_str):
         try:
             val = int(n)
-            if val not in result:
-                result.append(val)
+            if 1 <= val <= 45:
+                result.add(val)
         except ValueError:
             continue
     return sorted(result)
@@ -95,8 +105,8 @@ def parse_search_results(html_content: str) -> List[Dict[str, Any]]:
                 dec_no = to_english_digits(text.split(':', 1)[-1].strip())
             elif 'وضعیت پرونده' in text:
                 status = text.split(':', 1)[-1].strip()
-            elif 'طبقه بندی' in text:
-                raw_classes_str = text.split(':', 1)[-1].strip()
+            elif any(k in text for k in ('طبقه بندی', 'طبقه بندي', 'طبقات', 'طبقه', 'کلاس')):
+                raw_classes_str = text.split(':', 1)[-1].strip() if ':' in text else text
                 classes = parse_classes(raw_classes_str)
 
         is_rejected = is_rejected_status(status)
