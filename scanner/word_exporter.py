@@ -6,6 +6,7 @@ import os
 import io
 import re
 from typing import List, Dict, Any, Optional
+from xml.sax.saxutils import escape as xml_escape
 import requests
 import urllib3
 
@@ -80,14 +81,44 @@ def add_hyperlink(paragraph, url: str, text: str, size: int = 9, color_hex: str 
     """افزودن لینک کلیک‌خور در پاراگراف Word با فونت و قلم مناسب."""
     part = paragraph.part
     r_id = part.relate_to(url, docx.opc.constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    safe_text = xml_escape(text, {'"': '&quot;'})
     hyperlink = parse_xml(
         f'<w:hyperlink {nsdecls("w")} r:id="{r_id}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
     )
     new_run = parse_xml(
-        f'<w:r {nsdecls("w")}><w:rPr><w:rtl/><w:rFonts w:cs="Tahoma"/><w:color w:val="{color_hex}"/><w:sz w:val="{size*2}"/><w:u w:val="single"/></w:rPr><w:t>{text}</w:t></w:r>'
+        f'<w:r {nsdecls("w")}><w:rPr><w:rtl/><w:rFonts w:cs="Tahoma"/><w:color w:val="{color_hex}"/><w:sz w:val="{size*2}"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">{safe_text}</w:t></w:r>'
     )
     hyperlink.append(new_run)
     paragraph._p.append(hyperlink)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """تبدیل امن به float؛ در صورت مقدار خراب به‌جای کرش، مقدار پیش‌فرض برمی‌گرداند."""
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_valid_image(data: bytes) -> bool:
+    """اعتبارسنجی سبک بایت‌های تصویر قبل از تزریق به Word (جلوگیری از کرش روی دیتای خراب)."""
+    if not data or len(data) < 100:
+        return False
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as img:
+            img.verify()
+        return True
+    except Exception:
+        # اگر Pillow در دسترس نباشد یا تصویر خراب باشد، ریسک نکن
+        try:
+            import PIL  # noqa: F401
+            return False
+        except ImportError:
+            # بدون Pillow نمی‌شود اعتبارسنجی کرد؛ قبولش کن تا رفتار قبلی حفظ شود
+            return True
 
 
 from scanner import BASE_DIR
@@ -194,7 +225,7 @@ def export_declarations_to_word(
         # رنگ‌بندی یک‌درمیان (Zebra striping)
         bg_color = "F8FAFC" if idx % 2 == 1 else "FFFFFF"
         # اگر در ارزیابی شباهت بالا یا متوسط داشت، رنگ شاخص بگیرد
-        sim_score = float(item.get("similarity_score") or 0.0)
+        sim_score = _safe_float(item.get("similarity_score"), 0.0)
         risk_level = str(item.get("risk_level") or "").lower()
         if "high" in risk_level or sim_score >= 85.0:
             bg_color = "FEE2E2"  # قرمز بسیار ملایم
@@ -225,6 +256,9 @@ def export_declarations_to_word(
             elif img_bytes is not None:
                 consecutive_image_fails = 0
 
+        if img_bytes:
+            if not _is_valid_image(img_bytes):
+                img_bytes = None
         if img_bytes:
             try:
                 img_stream = io.BytesIO(img_bytes)
@@ -291,5 +325,11 @@ def export_declarations_to_word(
             progress_callback(idx, total)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    doc.save(output_path)
+    try:
+        doc.save(output_path)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"فایل Word باز است یا دسترسی نوشتن ندارید: {output_path}\n"
+            "لطفاً فایل brands.docx را در Word ببندید و دوباره تلاش کنید."
+        ) from exc
     return output_path

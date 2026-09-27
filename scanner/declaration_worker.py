@@ -9,6 +9,7 @@ import urllib3
 from scanner.logger import get_logger
 from scanner.auth import (
     get_authenticated_session, has_saved_session, get_saved_user_name,
+    START_URL,
 )
 from scanner.store import DATA_STORE_PATH, load_store
 from services.declaration_scan_service import collect_declarations, IncompleteFullScan
@@ -56,6 +57,21 @@ class DeclarationScrapeWorker(QThread):
                 pass
 
     def run(self):
+        # آخرین سد دفاعی: هیچ اکسپشنی نباید از run() نخ Qt بیرون بزند،
+        # چون در حالت windowed کل برنامه بی‌صدا بسته می‌شود.
+        try:
+            self._run_inner()
+        except Exception as exc:
+            logger.exception("Unhandled error in DeclarationScrapeWorker")
+            try:
+                if self._is_running:
+                    self.scan_failed.emit(f"خطای سیستمی در اجرای اسکن: {exc}")
+                else:
+                    self.scan_cancelled.emit()
+            except Exception:
+                pass
+
+    def _run_inner(self):
         self.progress_changed.emit(5, "بررسی نشست ذخیره‌شده...")
         logger.info(f"شروع اجرای اسکن اظهارنامه‌ها با حالت: {self.mode} (موتور سبک HTTP)")
 
