@@ -6,27 +6,53 @@ from typing import Any, Dict, List
 
 from scanner.similarity import TrademarkSimilarityEngine
 from scanner.store import load_store, load_class5_store, DATA_STORE_PATH
-from scanner.parser import to_english_digits
+from scanner.parser import to_english_digits, is_rejected_status
+from scanner.logger import get_logger
+
+logger = get_logger("comparator")
+
+
+def is_rejected_entry(entry: Dict[str, Any]) -> bool:
+    """بررسی اینکه آیا پرونده رد شده، ابطال شده یا نامعتبر است."""
+    if not entry or not isinstance(entry, dict):
+        return False
+    is_rej = entry.get("is_rejected")
+    if is_rej is True or is_rej == 1 or str(is_rej).strip().lower() in ("true", "1"):
+        return True
+    return is_rejected_status(entry.get("status", ""))
 
 
 def compare_stores(
     data_store: Dict[str, Any],
     class5_store: Dict[str, Any],
-    threshold: float = None
+    threshold: float = None,
+    include_rejected: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     مقایسه تمام عنوان‌های data_store با تمام رکوردهای کلاس ۵.
+    رکوردهای رد شده در سامانه (به‌ویژه در بخش جستجوی پیشرفته) در نتایج مقایسه نمایش داده نمی‌شوند.
     خروجی: لیست جفت‌های منطبق (مرتب‌شده بر اساس درصد شباهت نزولی).
     """
     engine = TrademarkSimilarityEngine()
     if threshold is None:
         threshold = engine.medium_threshold
 
-    data_entries = [e for e in data_store.values() if e.get("title")]
+    data_entries = [
+        e for e in data_store.values()
+        if e.get("title") and (include_rejected or not is_rejected_entry(e))
+    ]
     class5_entries = [
         e for e in class5_store.values()
-        if e.get("title") and (e.get("has_class_5") or not e.get("classes") or 5 in e.get("classes", []))
+        if e.get("title")
+        and (include_rejected or not is_rejected_entry(e))
+        and (e.get("has_class_5") or not e.get("classes") or 5 in e.get("classes", []))
     ]
+
+    logger.info(
+        "آماده‌سازی مقایسه: %d عنوان مرجع با %d رکورد معتبر (غیر رد شده) کلاس ۵",
+        len(data_entries), len(class5_entries)
+    )
+
     if not data_entries or not class5_entries:
         return []
 
@@ -47,9 +73,9 @@ def compare_stores(
     return matches
 
 
-def compare_default_stores(threshold: float = None) -> List[Dict[str, Any]]:
+def compare_default_stores(threshold: float = None, include_rejected: bool = False) -> List[Dict[str, Any]]:
     """مقایسه مخزن‌های پیش‌فرض SQLite."""
-    return compare_stores(load_store(DATA_STORE_PATH), load_class5_store(), threshold)
+    return compare_stores(load_store(DATA_STORE_PATH), load_class5_store(), threshold, include_rejected=include_rejected)
 
 
 def _same_record(a: Dict[str, Any], b: Dict[str, Any]) -> bool:

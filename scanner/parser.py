@@ -21,10 +21,11 @@ def to_english_digits(text: str) -> str:
 
 
 def is_rejected_status(status: str) -> bool:
-    """وضعیت پرونده رد شده یا ابطال شده است؟ (مبنای واحد برای همه ماژول‌ها)"""
+    """وضعیت پرونده رد شده، ابطال شده یا نامعتبر است؟ (مبنای واحد برای همه ماژول‌ها)"""
     if not status:
         return False
-    return ('رد شده' in status) or ('ابطال' in status)
+    s = str(status).strip()
+    return ('رد' in s) or ('ابطال' in s) or ('کان لم یکن' in s) or ('انصراف' in s)
 
 
 def is_finally_registered(status: str) -> bool:
