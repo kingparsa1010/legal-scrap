@@ -19,8 +19,8 @@ import webbrowser
 import webview
 
 # تنظیم مسیر ریشه پروژه
-from scanner import BASE_DIR as ROOT_DIR
-SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
+from scanner import BASE_DIR as ROOT_DIR, DATA_DIR
+SESSION_FILE = os.path.join(DATA_DIR, "session_auth.json")
 
 
 class DetailViewerApi:

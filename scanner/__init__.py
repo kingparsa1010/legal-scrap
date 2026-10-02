@@ -16,3 +16,13 @@ def get_base_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_DIR = get_base_dir()
+
+def get_data_dir() -> str:
+    """
+    مسیر پوشه واحد داده‌های برنامه (data/)؛ در صورت عدم وجود ساخته می‌شود.
+    """
+    data_dir = os.path.join(BASE_DIR, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+DATA_DIR = os.path.join(BASE_DIR, "data")

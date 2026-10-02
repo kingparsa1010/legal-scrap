@@ -21,6 +21,7 @@ from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QRect, QPoi
 from PyQt6.QtGui import QPixmap, QFont, QColor, QCursor, QPalette, QPainter, QPen, QBrush, QIcon
 
 
+from scanner import DATA_DIR
 from scanner.logger import (
     setup_logging, set_log_level, get_logger,
     get_log_file_path, read_latest_logs, clear_log_file
@@ -667,7 +668,8 @@ class TrademarkApp(QMainWindow):
         self._matched_high = 0
         self._matched_medium = 0
 
-        self.settings = QSettings("LegalScrap", "TrademarkApp")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        self.settings = QSettings(os.path.join(DATA_DIR, "settings.ini"), QSettings.Format.IniFormat)
         self._theme = str(self.settings.value("theme", "light"))
         if self._theme not in ("light", "dark", "system"):
             self._theme = "light"

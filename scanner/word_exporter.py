@@ -121,8 +121,8 @@ def _is_valid_image(data: bytes) -> bool:
             return True
 
 
-from scanner import BASE_DIR
-CACHE_DIR = os.path.join(BASE_DIR, ".cache", "images")
+from scanner import BASE_DIR, DATA_DIR
+CACHE_DIR = os.path.join(DATA_DIR, "cache", "images")
 
 
 def download_image(url: str, session: Optional[requests.Session] = None, allow_network: bool = True) -> Optional[bytes]:
@@ -163,7 +163,7 @@ def download_image(url: str, session: Optional[requests.Session] = None, allow_n
 
 def export_declarations_to_word(
     declarations: List[Dict[str, Any]],
-    output_path: str = "brands.docx",
+    output_path: str = "",
     session: Optional[requests.Session] = None,
     progress_callback=None
 ) -> str:
@@ -174,6 +174,8 @@ def export_declarations_to_word(
     - تصاویر بندانگشتی تعبیه‌شده
     - لینک مستقیم به سامانه
     """
+    if not output_path or output_path == "brands.docx":
+        output_path = os.path.join(DATA_DIR, "brands.docx")
     doc = Document()
     set_doc_rtl(doc)
 

@@ -179,8 +179,9 @@ class SSAAClient:
 
         # ذخیره آخرین پاسخ جهت عیب‌یابی آنی
         try:
-            os.makedirs("logs", exist_ok=True)
-            with open(os.path.join("logs", "last_search_response.html"), "w", encoding="utf-8") as f:
+            from scanner.logger import LOGS_DIR
+            os.makedirs(LOGS_DIR, exist_ok=True)
+            with open(os.path.join(LOGS_DIR, "last_search_response.html"), "w", encoding="utf-8") as f:
                 f.write(html)
         except Exception:
             pass

@@ -11,8 +11,8 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from scanner import BASE_DIR as ROOT_DIR
-DEFAULT_REPORTS_DIR = os.path.join(ROOT_DIR, "reports")
+from scanner import BASE_DIR as ROOT_DIR, DATA_DIR
+DEFAULT_REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 
 
 HEADER_FILL = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")

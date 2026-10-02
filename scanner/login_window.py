@@ -18,8 +18,8 @@ import threading
 from typing import Dict, Any, List
 import webview
 
-from scanner import BASE_DIR as ROOT_DIR
-SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
+from scanner import BASE_DIR as ROOT_DIR, DATA_DIR
+SESSION_FILE = os.path.join(DATA_DIR, "session_auth.json")
 START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 
@@ -93,6 +93,7 @@ def monitor_login(window: webview.Window, result: Dict[str, Any], timeout_second
                     "cookies": cookies_dict,
                     "cookie_list": cookie_list
                 }
+                os.makedirs(os.path.dirname(os.path.abspath(SESSION_FILE)), exist_ok=True)
                 with open(SESSION_FILE, "w", encoding="utf-8") as f:
                     json.dump(payload, f, ensure_ascii=False, indent=2)
 

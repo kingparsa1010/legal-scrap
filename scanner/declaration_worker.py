@@ -20,8 +20,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = get_logger("decl_worker")
 
 
-from scanner import BASE_DIR
-WORD_OUTPUT_PATH = os.path.join(BASE_DIR, "brands.docx")
+from scanner import BASE_DIR, DATA_DIR
+WORD_OUTPUT_PATH = os.path.join(DATA_DIR, "brands.docx")
 
 
 class DeclarationScrapeWorker(QThread):

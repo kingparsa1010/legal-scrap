@@ -18,10 +18,10 @@ from scanner.store import (
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = get_logger("auth")
 
-from scanner import BASE_DIR as ROOT_DIR
-SESSION_FILE = os.path.join(ROOT_DIR, "session_auth.json")
-ACCOUNTS_DIR = os.path.join(ROOT_DIR, "accounts")
-WORD_OUTPUT_PATH = os.path.join(ROOT_DIR, "brands.docx")
+from scanner import BASE_DIR as ROOT_DIR, DATA_DIR
+SESSION_FILE = os.path.join(DATA_DIR, "session_auth.json")
+ACCOUNTS_DIR = os.path.join(DATA_DIR, "accounts")
+WORD_OUTPUT_PATH = os.path.join(DATA_DIR, "brands.docx")
 
 START_URL = "https://ipm.ssaa.ir/CA/DeclarationList"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
@@ -108,6 +108,7 @@ def restore_account_data(user_name: str) -> Tuple[Dict[str, Any], str]:
     restored_docx = ""
     if os.path.exists(acc_docx):
         try:
+            os.makedirs(os.path.dirname(os.path.abspath(WORD_OUTPUT_PATH)), exist_ok=True)
             shutil.copy2(acc_docx, WORD_OUTPUT_PATH)
             restored_docx = WORD_OUTPUT_PATH
         except Exception as e:
@@ -157,6 +158,7 @@ def save_cookies(cookies: Dict[str, str], user_name: str = ""):
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "cookies": cookies
         }
+        os.makedirs(os.path.dirname(os.path.abspath(SESSION_FILE)), exist_ok=True)
         with open(SESSION_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         logger.info(f"اطلاعات نشست کاربر '{user_name}' با {len(cookies)} کوکی ذخیره شد.")
@@ -238,13 +240,14 @@ def clear_active_session():
     اطلاعات آرشیو شده هر حساب در پوشه accounts/ دست‌نخورده باقی می‌ماند.
     """
     for fname in ["session_auth.json", "session_storage.json"]:
-        p = os.path.join(ROOT_DIR, fname)
-        if os.path.exists(p):
-            try:
-                os.remove(p)
-                logger.info(f"فایل توکن موقت {p} هنگام خروج پاکسازی شد.")
-            except Exception as e:
-                logger.warning(f"عدم امکان حذف {p}: {e}")
+        for base in [DATA_DIR, ROOT_DIR]:
+            p = os.path.join(base, fname)
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                    logger.info(f"فایل توکن موقت {p} هنگام خروج پاکسازی شد.")
+                except Exception as e:
+                    logger.warning(f"عدم امکان حذف {p}: {e}")
 
 
 def clear_saved_session():

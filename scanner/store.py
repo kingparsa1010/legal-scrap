@@ -7,13 +7,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from scanner import BASE_DIR
+from scanner import BASE_DIR, DATA_DIR
 from scanner.logger import get_logger
 
 logger = get_logger("store")
-DB_PATH = os.path.join(BASE_DIR, "scans.db")
+DB_PATH = os.path.join(DATA_DIR, "scans.db")
 # Compatibility name only; live data is stored in scans.db.
-DATA_STORE_PATH = os.path.join(BASE_DIR, "data_store.json")
+DATA_STORE_PATH = os.path.join(DATA_DIR, "data_store.json")
 CLASS5_STORE_PATH = DATA_STORE_PATH
 DECLARATIONS_BUCKET = "declarations"
 CLASS5_BUCKET = "class5"
@@ -21,6 +21,9 @@ CLASS5_BUCKET = "class5"
 
 @contextmanager
 def _connect():
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -150,7 +153,9 @@ def load_account_store(user_name: str) -> Dict[str, Any]:
         return records
     # One-time compatibility import for installations that used per-account JSON.
     folder = re.sub(r'[\\/*?:"<>|]', "_", user_name).strip() or "default_user"
-    legacy_path = os.path.join(BASE_DIR, "accounts", folder, "data_store.json")
+    legacy_path = os.path.join(DATA_DIR, "accounts", folder, "data_store.json")
+    if not os.path.exists(legacy_path):
+        legacy_path = os.path.join(BASE_DIR, "accounts", folder, "data_store.json")
     raw = _legacy_payload(legacy_path)
     legacy_records = raw.get("declarations", raw) if isinstance(raw, dict) else {}
     if legacy_records:

@@ -14,7 +14,8 @@ def _get_base_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_DIR = _get_base_dir()
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
 DEFAULT_LOG_FILE = os.path.join(LOGS_DIR, "app.log")
 
 # سطوح لاگ معتبر
@@ -144,6 +145,7 @@ def read_latest_logs(max_lines: int = 500) -> str:
 def clear_log_file() -> bool:
     """پاکسازی محتوای فایل لاگ."""
     try:
+        os.makedirs(LOGS_DIR, exist_ok=True)
         if os.path.exists(DEFAULT_LOG_FILE):
             with open(DEFAULT_LOG_FILE, "w", encoding="utf-8") as f:
                 f.write("")

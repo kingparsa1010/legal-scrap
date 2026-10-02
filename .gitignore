@@ -89,6 +89,9 @@ ehthumbs_vista.db
 $RECYCLE.BIN/
 *.stackdump
 
+# LegalScrap - Single Data Directory
+data/
+
 # LegalScrap - Local Database & State
 scans.db
 scans.db-wal
