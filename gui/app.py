@@ -31,7 +31,8 @@ from scanner.client import SSAAClient
 from scanner.worker import ScanWorker
 from scanner.auth import (
     perform_browser_login,
-    get_saved_user_name, has_account_saved_data, has_saved_session
+    get_saved_user_name, has_account_saved_data, has_saved_session,
+    get_saved_credentials, save_credentials
 )
 from scanner.declaration_worker import DeclarationScrapeWorker, WORD_OUTPUT_PATH
 from scanner.parser import is_finally_registered, to_english_digits, ensure_record_fields
@@ -1091,6 +1092,53 @@ class TrademarkApp(QMainWindow):
         self.btn_logout_session.setVisible(False)
         session_box.addWidget(self.btn_logout_session)
         layout.addLayout(session_box)
+
+        # کارت ورود خودکار: ذخیره یک‌باره اطلاعات در هر سیستم (data/account.json محلی)
+        self.card_account = QGroupBox("ورود خودکار (یک‌بار در هر سیستم)", self)
+        self.card_account.setObjectName("Card")
+        acc_layout = QVBoxLayout(self.card_account)
+        acc_layout.setSpacing(6)
+        acc_hint = QLabel(
+            "نام‌کاربری و رمز را یک‌بار در همین سیستم ذخیره کن تا پنجره‌های ورود "
+            "خودکار پر شوند و فقط کد امنیتی دستی وارد شود.", self)
+        acc_hint.setObjectName("Hint")
+        acc_hint.setWordWrap(True)
+        acc_layout.addWidget(acc_hint)
+
+        self.txt_saved_username = QLineEdit(self)
+        self.txt_saved_username.setPlaceholderText("نام کاربری")
+        self.txt_saved_username.setToolTip("نام کاربری ثابت سامانه مالکیت معنوی")
+        acc_layout.addWidget(self.txt_saved_username)
+
+        self.txt_saved_password = QLineEdit(self)
+        self.txt_saved_password.setPlaceholderText("رمز عبور")
+        self.txt_saved_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_saved_password.setToolTip("رمز عبور ثابت سامانه مالکیت معنوی")
+        acc_layout.addWidget(self.txt_saved_password)
+
+        self.btn_save_account = QPushButton("💾 ذخیره اطلاعات ورود", self)
+        self.btn_save_account.setObjectName("Secondary")
+        self.btn_save_account.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_save_account.setToolTip("ذخیره محلی در همین سیستم (در گیت‌هاب و فایل exe قرار نمی‌گیرد)")
+        self.btn_save_account.clicked.connect(self.on_save_account_clicked)
+        acc_layout.addWidget(self.btn_save_account)
+
+        self.btn_edit_account = QPushButton("✏️ ویرایش اطلاعات ورود", self)
+        self.btn_edit_account.setObjectName("Secondary")
+        self.btn_edit_account.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_edit_account.setToolTip("نمایش دوباره فیلدها برای تغییر نام‌کاربری/رمز")
+        self.btn_edit_account.clicked.connect(self.on_edit_account_clicked)
+        acc_layout.addWidget(self.btn_edit_account)
+        layout.addWidget(self.card_account)
+        try:
+            _su, _sp = get_saved_credentials()
+            if _su:
+                self.txt_saved_username.setText(_su)
+            if _sp:
+                self.txt_saved_password.setText(_sp)
+        except Exception:
+            pass
+        self._refresh_account_card()
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -2744,6 +2792,51 @@ class TrademarkApp(QMainWindow):
         self.btn_login_session.setText("ورود به سامانه")
         self.btn_logout_session.setVisible(False)
         self.lbl_decl_status.setText("از حساب خارج شدید.")
+
+    def _refresh_account_card(self):
+        """اگر اطلاعات ذخیره شده باشد فقط دکمه ویرایش می‌ماند، وگرنه فیلدها."""
+        try:
+            _u, _ = get_saved_credentials()
+            has = bool(_u)
+        except Exception:
+            has = False
+        self.txt_saved_username.setVisible(not has)
+        self.txt_saved_password.setVisible(not has)
+        self.btn_save_account.setVisible(not has)
+        self.btn_edit_account.setVisible(has)
+
+    def on_edit_account_clicked(self):
+        """نمایش دوباره فیلدها برای ویرایش اطلاعات ورود."""
+        try:
+            _u, _p = get_saved_credentials()
+            if _u:
+                self.txt_saved_username.setText(_u)
+            if _p:
+                self.txt_saved_password.setText(_p)
+        except Exception:
+            pass
+        self.txt_saved_username.setVisible(True)
+        self.txt_saved_password.setVisible(True)
+        self.btn_save_account.setVisible(True)
+        self.btn_edit_account.setVisible(False)
+        self.txt_saved_username.setFocus()
+
+    def on_save_account_clicked(self):
+        """ذخیره محلی اطلاعات ثابت ورود برای پر شدن خودکار در همین سیستم."""
+        username = self.txt_saved_username.text().strip()
+        password = self.txt_saved_password.text()
+        if not username or not password:
+            self._msg("warning", "اطلاعات ناقص",
+                      "نام‌کاربری و رمز عبور هر دو لازم است.")
+            return
+        if save_credentials(username, password):
+            logger.info("اطلاعات ثابت ورود توسط کاربر ذخیره شد.")
+            self.lbl_decl_status.setText("✅ اطلاعات ورود در همین سیستم ذخیره شد؛ پنجره‌های ورود خودکار پر می‌شوند.")
+            self._refresh_account_card()
+            self._msg("information", "ذخیره شد",
+                      "اطلاعات ورود در همین سیستم ذخیره شد.\nاز این به بعد فقط کد امنیتی را دستی وارد کنید.")
+        else:
+            self._msg("warning", "خطا", "ذخیره اطلاعات ورود ممکن نشد.")
 
     def on_login_session_clicked(self):
         logger.info("کاربر روی دکمه ورود / تغییر حساب کلیک کرد.")
