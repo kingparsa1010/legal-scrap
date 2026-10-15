@@ -1,0 +1,131 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions & dynamic libraries
+*.dylib
+*.dll
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports / caches
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# Environments
+.env
+.env.*
+!.env.example
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and Editors
+.idea/
+.vscode/
+.freebuff/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+tempCodeRunnerFile.py
+
+# Operating System files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.stackdump
+
+# LegalScrap - Single Data Directory
+data/
+
+# LegalScrap - Local Database & State
+scans.db
+scans.db-wal
+scans.db-shm
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+temp_*.db
+data_store.json
+data_store.json.*
+*.bak
+*.corrupted
+
+# LegalScrap - Auth & Session Files (Sensitive)
+session_*.json
+session_auth.json
+session_storage.json
+account.json
+accounts/
+
+# LegalScrap - Logs & Diagnostics
+logs/
+*.log
+diagnostic_page.html
+last_search_response.html
+output/
+.state/
+.ipm/
+
+# LegalScrap - Generated Reports & Documents
+reports/
+brands.docx
+*.xlsx
+*.docx
