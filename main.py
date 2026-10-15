@@ -13,10 +13,19 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 if len(sys.argv) > 1 and sys.argv[1] == '--login':
     from scanner.logger import setup_logging as _setup
     _setup()
-    from scanner.login_window import run_login
-    res = run_login()
+    try:
+        from scanner.login_window import run_login
+        res = run_login()
+    except Exception as _e:
+        # هرگز نباید فرزند با اکسپشن مدیریت‌نشده بمیرد (پنجره کرش والد را معطل می‌کند)
+        res = {"success": False, "user_name": "", "error": str(_e)[:300]}
     print("\n---RESULT---")
-    print(json.dumps(res, ensure_ascii=False))
+    # فقط ASCII چاپ می‌شود: نام فارسی با ensure_ascii=False روی stdout با
+    # انکدینگ cp1252 در حالت EXE می‌ترکد (UnicodeEncodeError) و لاگین قفل می‌شود
+    try:
+        print(json.dumps(res, ensure_ascii=True))
+    except Exception:
+        print('{"success": false, "user_name": "", "error": "result-print-failed"}')
     sys.exit(0)
 
 # ابزار تشخیصی دامپ DOM صفحه ورود (عیب‌یابی پر کردن خودکار)

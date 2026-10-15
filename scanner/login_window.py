@@ -476,6 +476,7 @@ def run_login() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     res = run_login()
-    # چاپ نتیجه نهایی به صورت JSON در خروجی استاندارد
+    # چاپ نتیجه نهایی به صورت JSON در خروجی استاندارد (فقط ASCII تا روی stdout با
+    # انکدینگ غیر UTF-8 نترکد)
     print("\n---RESULT---")
-    print(json.dumps(res, ensure_ascii=False))
+    print(json.dumps(res, ensure_ascii=True))

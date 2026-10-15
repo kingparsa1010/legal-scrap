@@ -77,7 +77,10 @@ def run_dom_dump(url="https://ipm.ssaa.ir/CA/DeclarationList", wait_seconds=20):
     t.start()
     webview.start(gui="edgechromium", debug=False)
     t.join(timeout=10)
-    print(json.dumps(result, ensure_ascii=False))
+    try:
+        print(json.dumps(result, ensure_ascii=True))
+    except Exception:
+        print('{"error": "print-failed"}')
 
 
 if __name__ == "__main__":
