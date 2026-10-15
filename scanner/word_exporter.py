@@ -22,6 +22,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://ipm.ssaa.ir"
 
+# کاراکترهای غیرمجاز XML 1.0 (علت خطای all strings must be XML compatible):
+# داده‌های اسکرپ‌شده از سامانه گاهی NULL/control characters دارند.
+_ILLEGAL_XML_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+
+def _clean_xml(value, default="—"):
+    """حذف NULL bytes و کنترل‌کاراکترها برای سازگاری با XML ورد."""
+    if value is None:
+        return default
+    s = _ILLEGAL_XML_RE.sub('', str(value)).strip()
+    return s if s else default
+
 
 def set_doc_rtl(doc: Document):
     """تنظیم جهت کلی سند Word به راست‌به‌چپ."""
@@ -59,7 +71,7 @@ def set_cell_margins(cell, top=100, bottom=100, left=120, right=120):
 
 def add_rtl_run(paragraph, text: str, bold: bool = False, size: int = 9, color: Optional[RGBColor] = None):
     """افزودن یک تکست‌ران با قلم تاهما و پشتیبانی فونت فارسی RTL."""
-    run = paragraph.add_run(text)
+    run = paragraph.add_run(_clean_xml(text))
     run.bold = bold
     run.font.name = "Tahoma"
     run.font.size = Pt(size)
@@ -79,9 +91,13 @@ def add_rtl_run(paragraph, text: str, bold: bool = False, size: int = 9, color: 
 
 def add_hyperlink(paragraph, url: str, text: str, size: int = 9, color_hex: str = "1D4ED8"):
     """افزودن لینک کلیک‌خور در پاراگراف Word با فونت و قلم مناسب."""
+    url = _clean_xml(url, default="")
+    if not url:
+        add_rtl_run(paragraph, "—", size=size)
+        return
     part = paragraph.part
     r_id = part.relate_to(url, docx.opc.constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
-    safe_text = xml_escape(text, {'"': '&quot;'})
+    safe_text = xml_escape(_clean_xml(text), {'"': '&quot;'})
     hyperlink = parse_xml(
         f'<w:hyperlink {nsdecls("w")} r:id="{r_id}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
     )
@@ -276,7 +292,7 @@ def export_declarations_to_word(
         title_text = item.get("title", "") or "(بدون عنوان)"
         add_rtl_run(p_title, title_text, bold=True, size=9)
         if sim_score >= 70.0 and item.get("matched_brand"):
-            p_sub_sim = p_title.add_run(f"\n[شباهت {sim_score}% با {item.get('matched_brand')}]")
+            p_sub_sim = p_title.add_run(_clean_xml(f"\n[شباهت {sim_score}% با {item.get('matched_brand')}]", default=""))
             p_sub_sim.font.name = "Tahoma"
             p_sub_sim.font.size = Pt(7.5)
             p_sub_sim.bold = True
