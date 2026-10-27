@@ -35,7 +35,7 @@ from scanner.auth import (
     get_saved_credentials, save_credentials
 )
 from scanner.declaration_worker import DeclarationScrapeWorker, WORD_OUTPUT_PATH
-from scanner.parser import is_finally_registered, to_english_digits, ensure_record_fields
+from scanner.parser import is_finally_registered, is_rejected_status, to_english_digits, ensure_record_fields
 from scanner.store import (
     DATA_STORE_PATH, load_store, save_store, load_class5_store, save_class5_store, store_counts
 )
@@ -308,6 +308,48 @@ def detect_system_dark(app: QApplication) -> bool:
         return False
 
 
+# رنگ‌بندی وضعیت پرونده‌ها: (پس‌زمینه، متن) برای تم روشن و تیره
+STATUS_STYLES = {
+    "registered": {"light": ("#DCFCE7", "#166534"), "dark": ("#14532D", "#BBF7D0")},  # سبز
+    "pending":    {"light": ("#FEF3C7", "#92400E"), "dark": ("#78350F", "#FDE68A")},  # زرد
+    "defect":     {"light": ("#FFEDD5", "#9A3412"), "dark": ("#7C2D12", "#FED7AA")},  # نارنجی
+    "accepted":   {"light": ("#CCFBF1", "#115E59"), "dark": ("#134E4A", "#99F6E4")},  # فیروزه‌ای
+    "published":  {"light": ("#DBEAFE", "#1E40AF"), "dark": ("#1E3A8A", "#BFDBFE")},  # آبی
+    "rejected":   {"light": ("#FEE2E2", "#991B1B"), "dark": ("#7F1D1D", "#FECACA")},  # قرمز
+    "cancelled":  {"light": ("#E2E8F0", "#475569"), "dark": ("#334155", "#CBD5E1")},  # خاکستری
+}
+
+
+def status_category(status: str) -> str:
+    """دسته‌بندی وضعیت پرونده برای رنگ‌آمیزی؛ رشته خالی یعنی بدون رنگ."""
+    s = str(status or "").strip()
+    if not s:
+        return ""
+    if "انصراف" in s:
+        return "cancelled"
+    if is_rejected_status(s):
+        return "rejected"
+    if "ثبت قطعی" in s:
+        return "registered"
+    if "رفع نقص" in s:
+        return "defect"
+    if "انتظار" in s or "بررسی" in s:
+        return "pending"
+    if "پذیرش" in s or "بلامانع" in s:
+        return "accepted"
+    if "آگهی" in s:
+        return "published"
+    return ""
+
+
+def _is_active_rec(r: dict) -> bool:
+    return bool(r.get('is_active') or is_finally_registered(r.get('status', '')))
+
+
+def _is_rejected_rec(r: dict) -> bool:
+    return bool(r.get('is_rejected') or is_rejected_status(r.get('status', '')))
+
+
 class NumericTableWidgetItem(QTableWidgetItem):
     """آیتم جدول عددی برای مرتب‌سازی صحیح مقادیر عددی (جلوگیری از قرارگیری ۱۷ بین ۱۶۹ و ۱۷۰)."""
     def __init__(self, value: int | float, text: str = None):
@@ -360,10 +402,25 @@ def _parse_jalali_key(date_raw: str) -> tuple:
     return (y, m, d, hh, mm)
 
 
+def format_date_dmy(date_raw) -> str:
+    """نرمال‌سازی تاریخ به فرمت روز/ماه/سال با ارقام لاتین (مثال: 12/05/1403).
+
+    ورودی می‌تواند سال/ماه/روز یا روز/ماه/سال، با ارقام فارسی یا لاتین، و گاهی همراه ساعت باشد.
+    اگر تاریخ کامل (روز، ماه، سال) قابل تشخیص نباشد، همان متن با ارقام لاتین برمی‌گردد.
+    """
+    raw = str(date_raw or "").strip()
+    if not raw or raw == "—":
+        return "—"
+    y, m, d, _hh, _mm = _parse_jalali_key(raw)
+    if y and m and d:
+        return f"{d:02d}/{m:02d}/{y:04d}"
+    return to_english_digits(raw)
+
+
 class DateTableWidgetItem(QTableWidgetItem):
-    """آیتم تاریخ شمسی برای مرتب‌سازی تقویمی با کلیک روی هدر (هر دو فرمت روز/ماه/سال و سال/ماه/روز)."""
+    """آیتم تاریخ شمسی برای مرتب‌سازی تقویمی با کلیک روی هدر؛ نمایش همیشه روز/ماه/سال لاتین."""
     def __init__(self, date_text: str):
-        super().__init__(str(date_text or "—"))
+        super().__init__(format_date_dmy(date_text))
         self._key = _parse_jalali_key(date_text)
         self.setData(Qt.ItemDataRole.UserRole, self._key)
         self.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -774,6 +831,7 @@ class TrademarkApp(QMainWindow):
         """تنظیم خودکار ابعاد تمام ستون‌های جداول برنامه متناسب با محتوای آنها."""
         for tbl in (getattr(self, "table_all", None),
                     getattr(self, "table_active", None),
+                    getattr(self, "table_rejected", None),
                     getattr(self, "table_class5", None),
                     getattr(self, "table_matched", None)):
             if tbl is not None:
@@ -1235,7 +1293,7 @@ class TrademarkApp(QMainWindow):
         self._update_stat_captions()
         self._refresh_stats()
         if is_decl and hasattr(self, "table_all") and hasattr(self, "tabs_mode1"):
-            active_tbl = self.table_all if self.tabs_mode1.currentIndex() == 0 else self.table_active
+            active_tbl = self._mode1_tables()[self.tabs_mode1.currentIndex()]
             self.auto_fit_table_columns(active_tbl)
         elif not is_decl and hasattr(self, "table_class5") and hasattr(self, "tabs_mode2"):
             active_tbl = self.table_class5 if self.tabs_mode2.currentIndex() == 0 else self.table_matched
@@ -1646,7 +1704,7 @@ class TrademarkApp(QMainWindow):
         return panel
 
     # ------------------------------------------------------------------
-    # Mode 1 panel — ALL SCRAPED RECORDS + ACTIVE ONLY
+    # Mode 1 panel — همه (بدون ثبت قطعی) + فقط ثبت قطعی شده + رد شده‌ها
     # ------------------------------------------------------------------
     def _build_mode1_panel(self) -> QWidget:
         container = QWidget()
@@ -1676,18 +1734,20 @@ class TrademarkApp(QMainWindow):
         self.tabs_mode1 = QTabWidget(self)
         v.addWidget(self.tabs_mode1, stretch=1)
 
-        # تب ۱: ALL SCRAPED RECORDS
-        self.tab_all = QWidget()
-        all_layout = QVBoxLayout(self.tab_all)
-        all_layout.setContentsMargins(10, 10, 10, 10)
-        all_hint = QLabel("تمامی اظهارنامه‌های استخراج‌شده از لیست عمومی، بدون هیچ‌گونه فیلتر.", self)
-        all_hint.setObjectName("Hint")
-        all_layout.addWidget(all_hint)
-        self.table_all = self.create_table([
+        record_headers = [
             "ردیف", "شماره اظهارنامه", "نام علامت لاتین", "نام علامت فارسی",
             "وضعیت پرونده", "شماره ثبت", "تاریخ ثبت", "تاریخ تمدید",
             "لینک دانلود گواهی ثبت"
-        ])
+        ]
+
+        # تب ۱: همه (به‌جز ثبت قطعی شده‌ها؛ هر وضعیت با رنگ مخصوص)
+        self.tab_all = QWidget()
+        all_layout = QVBoxLayout(self.tab_all)
+        all_layout.setContentsMargins(10, 10, 10, 10)
+        all_hint = QLabel("اظهارنامه‌هایی که هنوز «ثبت قطعی» نشده‌اند (هر وضعیت با رنگ مخصوص خودش).", self)
+        all_hint.setObjectName("Hint")
+        all_layout.addWidget(all_hint)
+        self.table_all = self.create_table(record_headers)
         self.table_all.setItemDelegateForColumn(8, ActionCellDelegate(self, self.table_all))
         self.table_all.setMouseTracking(True)
         self.table_all.setColumnWidth(8, 140)
@@ -1698,8 +1758,8 @@ class TrademarkApp(QMainWindow):
         self.all_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.all_empty.setWordWrap(True)
         all_layout.addWidget(self.all_empty)
-        self.tabs_mode1.addTab(self.tab_all, "کل اظهارنامه‌های استخراج‌شده")
-        self.tabs_mode1.setTabToolTip(0, "تمامی اظهارنامه‌های استخراج‌شده بدون فیلتر")
+        self.tabs_mode1.addTab(self.tab_all, "همه")
+        self.tabs_mode1.setTabToolTip(0, "همه اظهارنامه‌ها به‌جز ثبت قطعی شده‌ها")
 
         # تب ۲: ACTIVE ONLY (ثبت قطعی شده)
         self.tab_active = QWidget()
@@ -1708,11 +1768,7 @@ class TrademarkApp(QMainWindow):
         active_hint = QLabel("فقط پرونده‌هایی که وضعیت آن‌ها در سامانه ثبت «ثبت قطعی شده» است.", self)
         active_hint.setObjectName("Hint")
         active_layout.addWidget(active_hint)
-        self.table_active = self.create_table([
-            "ردیف", "شماره اظهارنامه", "نام علامت لاتین", "نام علامت فارسی",
-            "وضعیت پرونده", "شماره ثبت", "تاریخ ثبت", "تاریخ تمدید",
-            "لینک دانلود گواهی ثبت"
-        ])
+        self.table_active = self.create_table(record_headers)
         self.table_active.setItemDelegateForColumn(8, ActionCellDelegate(self, self.table_active))
         self.table_active.setMouseTracking(True)
         self.table_active.setColumnWidth(8, 140)
@@ -1725,11 +1781,57 @@ class TrademarkApp(QMainWindow):
         active_layout.addWidget(self.active_empty)
         self.tabs_mode1.addTab(self.tab_active, "فقط ثبت قطعی شده")
         self.tabs_mode1.setTabToolTip(1, "فقط موارد دارای وضعیت «ثبت قطعی شده»")
-        self.tabs_mode1.currentChanged.connect(
-            lambda idx: self.auto_fit_table_columns(self.table_all if idx == 0 else self.table_active)
-        )
 
+        # تب ۳: رد شده‌ها
+        self.tab_rejected = QWidget()
+        rej_layout = QVBoxLayout(self.tab_rejected)
+        rej_layout.setContentsMargins(10, 10, 10, 10)
+        rej_hint = QLabel("پرونده‌هایی که رد، ابطال یا منصرف شده‌اند.", self)
+        rej_hint.setObjectName("Hint")
+        rej_layout.addWidget(rej_hint)
+        self.table_rejected = self.create_table(record_headers)
+        self.table_rejected.setItemDelegateForColumn(8, ActionCellDelegate(self, self.table_rejected))
+        self.table_rejected.setMouseTracking(True)
+        self.table_rejected.setColumnWidth(8, 140)
+        self.table_rejected.cellDoubleClicked.connect(self._on_table_rejected_double_click)
+        rej_layout.addWidget(self.table_rejected, stretch=1)
+        self.rejected_empty = QLabel("هنوز پرونده‌ای با وضعیت رد شده یافت نشده است.", self)
+        self.rejected_empty.setObjectName("EmptyState")
+        self.rejected_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rejected_empty.setWordWrap(True)
+        rej_layout.addWidget(self.rejected_empty)
+        self.tabs_mode1.addTab(self.tab_rejected, "رد شده‌ها")
+        self.tabs_mode1.setTabToolTip(2, "پرونده‌های رد شده / ابطال شده / منصرف شده")
+
+        self.tabs_mode1.currentChanged.connect(
+            lambda idx: self.auto_fit_table_columns(self._mode1_tables()[idx])
+        )
+        self._apply_mode1_default_sort()
         return container
+
+    def _mode1_tables(self):
+        return [self.table_all, self.table_active, self.table_rejected]
+
+    def _apply_mode1_default_sort(self):
+        """مرتب‌سازی پیش‌فرض جدول‌های حالت ۱ بر اساس «تاریخ ثبت» (ستون ۶)؛ پیش‌فرض: جدیدترین اول."""
+        order = (Qt.SortOrder.AscendingOrder if self._mode1_sort == "oldest"
+                 else Qt.SortOrder.DescendingOrder)
+        for t in self._mode1_tables():
+            t.sortByColumn(6, order)
+
+    def _renumber_rows(self, table: QTableWidget):
+        """شماره‌گذاری مجدد ستون ردیف بعد از مرتب‌سازی (۱، ۲، ۳ ... از بالا)."""
+        if table.columnCount() == 0 or table.rowCount() == 0:
+            return
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+        for r in range(table.rowCount()):
+            item = table.item(r, 0)
+            if isinstance(item, NumericTableWidgetItem):
+                item.setText(str(r + 1))
+                item._val = float(r + 1)
+                item.setData(Qt.ItemDataRole.UserRole, item._val)
+        table.setSortingEnabled(sorting)
 
     # ------------------------------------------------------------------
     # Mode 2 panel — CAPTURED CLASS 5 + MATCHED
@@ -1900,7 +2002,7 @@ class TrademarkApp(QMainWindow):
             timer = QTimer(self)
             timer.setSingleShot(True)
             timer.setInterval(200)
-            timer.timeout.connect(lambda t=table: self.auto_fit_table_columns(t))
+            timer.timeout.connect(lambda t=table: (self._renumber_rows(t), self.auto_fit_table_columns(t)))
             self._autofit_timers[table] = timer
         timer.start()
 
@@ -1939,19 +2041,20 @@ class TrademarkApp(QMainWindow):
             self.stat_active_value.setText(str(self._active))
             self.stat_rejected_value.setText(str(self._rejected))
             self.stat_extra_value.setText(str(max(0, self._total - self._active - self._rejected)))
-            self.tabs_mode1.setTabText(0, f"کل اظهارنامه‌های استخراج‌شده ({self._total})")
+            all_count = max(0, self._total - self._active)
+            self.tabs_mode1.setTabText(0, f"همه ({all_count})")
             self.tabs_mode1.setTabText(1, f"فقط ثبت قطعی شده ({self._active})")
+            self.tabs_mode1.setTabText(2, f"رد شده‌ها ({self._rejected})")
             # وضعیت خالی بودن تب‌ها
-            self.all_empty.setVisible(self._total == 0)
-            if self._total == 0 and self.current_scan_id:
-                self.all_empty.setText(
-                    "اسکن تمام شد اما رکوردی با این فیلترها پیدا نشد — بازه تاریخ را بازتر کنید."
-                )
+            self.all_empty.setVisible(all_count == 0)
+            if all_count == 0 and self._total > 0:
+                self.all_empty.setText("همه پرونده‌ها «ثبت قطعی شده» هستند؛ موردی برای نمایش در این تب نیست.")
+            elif all_count == 0 and self.current_scan_id:
+                self.all_empty.setText("اسکن تمام شد اما رکوردی پیدا نشد — بازه تاریخ را بازتر کنید.")
+            self.rejected_empty.setVisible(self._rejected == 0)
             self.active_empty.setVisible(self._active == 0)
             if self._active == 0 and self._total > 0:
-                self.active_empty.setText(
-                    "رکوردی با وضعیت «ثبت قطعی شده» یافت نشد — جزئیات در تب کل اظهارنامه‌ها مشاهده می‌شود."
-                )
+                self.active_empty.setText("رکوردی با وضعیت «ثبت قطعی شده» یافت نشد — بقیه موارد در تب «همه» هستند.")
             elif self._active == 0:
                 self.active_empty.setText("هنوز پرونده‌ای با وضعیت «ثبت قطعی شده» یافت نشده است.")
         else:
@@ -1986,6 +2089,7 @@ class TrademarkApp(QMainWindow):
     def _reset_mode1_tables(self):
         self.table_all.setRowCount(0)
         self.table_active.setRowCount(0)
+        self.table_rejected.setRowCount(0)
 
     def _reset_mode2_tables(self):
         self.table_class5.setRowCount(0)
@@ -2273,13 +2377,15 @@ class TrademarkApp(QMainWindow):
 
     def _on_mode1_record(self, r: dict, refresh_stats: bool = True):
         self._total += 1
-        if r.get('is_active') or is_finally_registered(r.get('status', '')):
+        if _is_active_rec(r):
             self._active += 1
             r['is_active'] = 1
-            self.add_to_table_active(r)
-        if r.get('is_rejected'):
+            self.add_to_table_active(r)      # ثبت قطعی فقط در تب خودش
+        else:
+            self.add_to_table_all(r)         # بقیه در «همه»
+        if _is_rejected_rec(r):
             self._rejected += 1
-        self.add_to_table_all(r)
+            self.add_to_table_rejected(r)
         if refresh_stats:
             self._refresh_stats()
 
@@ -2439,6 +2545,20 @@ class TrademarkApp(QMainWindow):
             item.setToolTip("لینک پرونده موجود نیست")
         return item
 
+    def _status_item(self, status: str) -> QTableWidgetItem:
+        """سلول وضعیت با رنگ مخصوص هر وضعیت (متناسب با تم روشن/تیره)."""
+        item = QTableWidgetItem(status or "—")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        cat = status_category(status)
+        if cat:
+            bg, fg = STATUS_STYLES[cat]["dark" if self._dark_active else "light"]
+            item.setBackground(QColor(bg))
+            item.setForeground(QColor(fg))
+            f = item.font()
+            f.setBold(True)
+            item.setFont(f)
+        return item
+
     def _set_table_active_row_items(self, row: int, r: dict):
         r = ensure_record_fields(dict(r))
         title = r.get('title', '')
@@ -2454,12 +2574,7 @@ class TrademarkApp(QMainWindow):
         self.table_active.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
         self.table_active.setItem(row, 2, QTableWidgetItem(str(title_en or "—")))
         self.table_active.setItem(row, 3, QTableWidgetItem(str(title_fa or "—")))
-
-        status_item = QTableWidgetItem(r.get('status', ''))
-        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setForeground(QColor("#15803D") if not self._dark_active else QColor("#4ADE80"))
-        self.table_active.setItem(row, 4, status_item)
-
+        self.table_active.setItem(row, 4, self._status_item(r.get('status', '')))
         self.table_active.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
         self.table_active.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
         self.table_active.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
@@ -2476,7 +2591,7 @@ class TrademarkApp(QMainWindow):
         self.table_class5.setItem(row, 2, QTableWidgetItem(
             r.get('dec_no_display') or r.get('declaration_no', '')
         ))
-        self.table_class5.setItem(row, 3, QTableWidgetItem(
+        self.table_class5.setItem(row, 3, DateTableWidgetItem(
             r.get('declaration_date') or r.get('reg_date', '')
         ))
 
@@ -2515,8 +2630,8 @@ class TrademarkApp(QMainWindow):
         title_b = m.get('title_b', '')
         dec_a = m.get('declaration_no_a', '')
         dec_b = m.get('declaration_no_b', '')
-        date_a = m.get('declaration_date_a', '')
-        date_b = m.get('declaration_date_b', '')
+        date_a = format_date_dmy(m.get('declaration_date_a', ''))
+        date_b = format_date_dmy(m.get('declaration_date_b', ''))
 
         self.table_matched.setItem(row, 3, QTableWidgetItem(title_a))
         self.table_matched.setItem(row, 4, QTableWidgetItem(dec_a))
@@ -2526,7 +2641,9 @@ class TrademarkApp(QMainWindow):
         self.table_matched.setItem(row, 8, self._make_action_item(m.get('detail_url_a', ''), title_a))
         self.table_matched.setItem(row, 9, self._make_action_item(m.get('detail_url_b', ''), title_b))
 
-    def _set_table_all_row_items(self, row: int, r: dict):
+    def _set_table_all_row_items(self, row: int, r: dict, table=None):
+        """پر کردن یک ردیف؛ برای جدول «همه» و «رد شده‌ها» (ستون‌های یکسان)."""
+        tbl = table or self.table_all
         r = ensure_record_fields(dict(r))
         title = r.get('title', '')
         dec_no = r.get('dec_no_display') or r.get('declaration_no', '')
@@ -2537,15 +2654,15 @@ class TrademarkApp(QMainWindow):
         renewal = r.get('renewal_date', '')
         cert_url = r.get('certificate_url') or r.get('detail_url', '')
 
-        self.table_all.setItem(row, 0, NumericTableWidgetItem(row + 1))
-        self.table_all.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
-        self.table_all.setItem(row, 2, QTableWidgetItem(str(title_en or "—")))
-        self.table_all.setItem(row, 3, QTableWidgetItem(str(title_fa or "—")))
-        self.table_all.setItem(row, 4, QTableWidgetItem(r.get('status', '')))
-        self.table_all.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
-        self.table_all.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
-        self.table_all.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
-        self.table_all.setItem(row, 8, self._make_action_item(cert_url, title))
+        tbl.setItem(row, 0, NumericTableWidgetItem(row + 1))
+        tbl.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
+        tbl.setItem(row, 2, QTableWidgetItem(str(title_en or "—")))
+        tbl.setItem(row, 3, QTableWidgetItem(str(title_fa or "—")))
+        tbl.setItem(row, 4, self._status_item(r.get('status', '')))
+        tbl.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
+        tbl.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
+        tbl.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
+        tbl.setItem(row, 8, self._make_action_item(cert_url, title))
 
     def add_to_table_active(self, r: dict):
         sorting = self.table_active.isSortingEnabled()
@@ -2574,14 +2691,18 @@ class TrademarkApp(QMainWindow):
         self.table_matched.setSortingEnabled(sorting)
         self._schedule_auto_fit(self.table_matched)
 
-    def add_to_table_all(self, r: dict):
-        sorting = self.table_all.isSortingEnabled()
-        self.table_all.setSortingEnabled(False)
-        row = self.table_all.rowCount()
-        self.table_all.insertRow(row)
-        self._set_table_all_row_items(row, r)
-        self.table_all.setSortingEnabled(sorting)
-        self._schedule_auto_fit(self.table_all)
+    def add_to_table_all(self, r: dict, table=None):
+        tbl = table or self.table_all
+        sorting = tbl.isSortingEnabled()
+        tbl.setSortingEnabled(False)
+        row = tbl.rowCount()
+        tbl.insertRow(row)
+        self._set_table_all_row_items(row, r, tbl)
+        tbl.setSortingEnabled(sorting)
+        self._schedule_auto_fit(tbl)
+
+    def add_to_table_rejected(self, r: dict):
+        self.add_to_table_all(r, self.table_rejected)
 
     def _on_table_all_double_click(self, row: int, col: int):
         item = self.table_all.item(row, 8)
@@ -2592,6 +2713,13 @@ class TrademarkApp(QMainWindow):
 
     def _on_table_active_double_click(self, row: int, col: int):
         item = self.table_active.item(row, 8)
+        if item:
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and data.get("url"):
+                self.open_in_webview(data["url"], data.get("title", ""))
+
+    def _on_table_rejected_double_click(self, row: int, col: int):
+        item = self.table_rejected.item(row, 8)
         if item:
             data = item.data(Qt.ItemDataRole.UserRole)
             if isinstance(data, dict) and data.get("url"):
@@ -2674,18 +2802,18 @@ class TrademarkApp(QMainWindow):
             data_store = load_store(DATA_STORE_PATH)
             if self._current_mode == 0:
                 all_recs = [ensure_record_fields(dict(r)) for r in data_store.values()]
-                active_recs = [
-                    r for r in all_recs
-                    if r.get('is_active') or is_finally_registered(r.get('status', ''))
-                ]
+                active_recs = [r for r in all_recs if _is_active_rec(r)]
+                other_recs = [r for r in all_recs if not _is_active_rec(r)]
+                rejected_recs = [r for r in all_recs if _is_rejected_rec(r)]
                 if not all_recs:
                     self._msg("information", "داده‌ای نیست",
                               "هنوز رکوردی در مخزن داده‌ها ذخیره نشده است.\nابتدا اسکن لیست عمومی را اجرا فرمایید.")
                     return
                 path = export_scan_to_excel(
                     scan_info={'scan_date': time.strftime("%Y/%m/%d %H:%M")},
-                    all_records=all_recs,
+                    all_records=other_recs,
                     active=active_recs,
+                    rejected=rejected_recs,
                     prefix="گزارش_حالت_۱",
                 )
             else:
@@ -2914,6 +3042,7 @@ class TrademarkApp(QMainWindow):
             self.settings.setValue("mode1_sort", self._mode1_sort)
         except Exception:
             pass
+        self._apply_mode1_default_sort()
         try:
             store = load_store(DATA_STORE_PATH)
             if store:
@@ -2933,37 +3062,34 @@ class TrademarkApp(QMainWindow):
             self._refresh_stats()
             return
 
-        all_records = self._sorted_mode1(list(store.values()))
-        active_records = [
-            r for r in all_records
-            if r.get('is_active') or is_finally_registered(r.get('status', ''))
-        ]
-        self._total = len(all_records)
+        sorted_records = self._sorted_mode1(list(store.values()))
+        active_records = [r for r in sorted_records if _is_active_rec(r)]
+        other_records = [r for r in sorted_records if not _is_active_rec(r)]
+        rejected_records = [r for r in sorted_records if _is_rejected_rec(r)]
+        self._total = len(sorted_records)
         self._active = len(active_records)
-        self._rejected = sum(1 for r in all_records if r.get('is_rejected'))
+        self._rejected = len(rejected_records)
 
-        sorting_all = self.table_all.isSortingEnabled()
-        sorting_act = self.table_active.isSortingEnabled()
-        self.table_all.setSortingEnabled(False)
-        self.table_active.setSortingEnabled(False)
-        self.table_all.setUpdatesEnabled(False)
-        self.table_active.setUpdatesEnabled(False)
+        tables = self._mode1_tables()
+        sorting_states = [t.isSortingEnabled() for t in tables]
+        for t in tables:
+            t.setSortingEnabled(False)
+            t.setUpdatesEnabled(False)
 
         try:
-            self.table_all.setRowCount(len(all_records))
-            for row, r in enumerate(all_records):
-                self._set_table_all_row_items(row, r)
+            for tbl, recs in ((self.table_all, other_records), (self.table_rejected, rejected_records)):
+                tbl.setRowCount(len(recs))
+                for row, r in enumerate(recs):
+                    self._set_table_all_row_items(row, r, tbl)
 
             self.table_active.setRowCount(len(active_records))
             for row, r in enumerate(active_records):
                 self._set_table_active_row_items(row, r)
         finally:
-            self.table_all.setUpdatesEnabled(True)
-            self.table_active.setUpdatesEnabled(True)
-            self.table_all.setSortingEnabled(sorting_all)
-            self.table_active.setSortingEnabled(sorting_act)
-            self._schedule_auto_fit(self.table_all)
-            self._schedule_auto_fit(self.table_active)
+            for t, s in zip(tables, sorting_states):
+                t.setUpdatesEnabled(True)
+                t.setSortingEnabled(s)
+                self._schedule_auto_fit(t)
             self._refresh_stats()
 
         self._refresh_store_counts()
@@ -2999,7 +3125,7 @@ class TrademarkApp(QMainWindow):
             self._rejected = 0
             self._refresh_stats()
 
-        # نمایش زنده در تب ALL SCRAPED RECORDS
+        # نمایش زنده در تب «همه»
         if self._current_mode != 0:
             self.combo_mode.setCurrentIndex(0)
         self.tabs_mode1.setCurrentIndex(0)
@@ -3252,7 +3378,7 @@ class TrademarkApp(QMainWindow):
             self,
             "تأیید پاکسازی لیست اظهارنامه‌ها",
             "آیا مطمئن هستید که می‌خواهید تمام رکوردهای ذخیره‌شده اظهارنامه‌ها را پاک کنید؟\n\n"
-            "با این کار جدول‌های «کل اظهارنامه‌های استخراج‌شده» و «فقط ثبت قطعی شده» خالی شده و باید مجدداً اسکن انجام دهید.",
+            "با این کار جدول‌های «همه»، «فقط ثبت قطعی شده» و «رد شده‌ها» خالی شده و باید مجدداً اسکن انجام دهید.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -3262,8 +3388,7 @@ class TrademarkApp(QMainWindow):
         logger.info("کاربر درخواست پاکسازی داده‌های اظهارنامه‌ها را تأیید کرد.")
         save_store({}, DATA_STORE_PATH)
 
-        self.table_all.setRowCount(0)
-        self.table_active.setRowCount(0)
+        self._reset_mode1_tables()
         self._total = 0
         self._active = 0
         self._rejected = 0
@@ -3272,6 +3397,8 @@ class TrademarkApp(QMainWindow):
             self.all_empty.setVisible(True)
         if hasattr(self, "active_empty"):
             self.active_empty.setVisible(True)
+        if hasattr(self, "rejected_empty"):
+            self.rejected_empty.setVisible(True)
 
         self.decl_progress_bar.setValue(0)
         self._refresh_stats()
@@ -3345,4 +3472,3 @@ def run_app():
 
 if __name__ == '__main__':
     run_app()
-

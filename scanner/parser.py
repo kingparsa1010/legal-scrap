@@ -20,6 +20,35 @@ def to_english_digits(text: str) -> str:
     return str(text).translate(PERSIAN_DIGITS_TABLE)
 
 
+def normalize_date(raw: Any) -> str:
+    """یکسان‌سازی تاریخ شمسی به فرمت «سال/ماه/روز» با ارقام لاتین (مثلاً 1403/05/07).
+
+    ورودی می‌تواند «سال/ماه/روز» یا «روز/ماه/سال»، با ارقام فارسی/عربی/لاتین و
+    جداکننده‌های مختلف (/ - . و غیره) و حتی همراه ساعت باشد؛ ساعت حذف می‌شود.
+    اگر رشته قابل تشخیص به‌عنوان تاریخ کامل نباشد، همان متن (با ارقام لاتین) برمی‌گردد.
+    """
+    if raw is None:
+        return ""
+    en = to_english_digits(str(raw)).strip()
+    if not en or en == '—':
+        return ""
+    nums = re.findall(r'\d+', en)
+    if len(nums) < 3:
+        return en
+    a, b, c = int(nums[0]), int(nums[1]), int(nums[2])
+    if a > 31:            # سال/ماه/روز
+        y, m, d = a, b, c
+    elif c > 31:          # روز/ماه/سال
+        d, m, y = a, b, c
+    else:                 # هر دو ≤ ۳۱ → سال دو رقمی؛ فرض سال/ماه/روز
+        y, m, d = a, b, c
+        if y < 100:
+            y += 1400
+    if not (1 <= m <= 12 and 1 <= d <= 31 and y > 0):
+        return en
+    return f"{y:04d}/{m:02d}/{d:02d}"
+
+
 def is_rejected_status(status: str) -> bool:
     """وضعیت پرونده رد شده، ابطال شده یا نامعتبر است؟ (مبنای واحد برای همه ماژول‌ها)"""
     if not status:
@@ -83,6 +112,10 @@ def ensure_record_fields(record: Dict[str, Any]) -> Dict[str, Any]:
         record['reg_date'] = record.get('declaration_date')
     if not record.get('declaration_date') and record.get('reg_date'):
         record['declaration_date'] = record.get('reg_date')
+    # یکسان‌سازی فرمت تاریخ‌ها: سال/ماه/روز با ارقام لاتین
+    for date_key in ('reg_date', 'declaration_date', 'renewal_date'):
+        if record.get(date_key):
+            record[date_key] = normalize_date(record[date_key])
     return record
 
 
@@ -113,8 +146,10 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
     out['register_no'] = _after(['شماره ثبت', 'شماره اظهارنامه ثبت', 'شماره پرونده ثبت'])
     reg = _after(['تاریخ ثبت', 'تاریخ ثبت قطعی'])
     if reg:
-        out['reg_date'] = reg
-    out['renewal_date'] = _after(['تاریخ تمدید', 'تمدید اعتبار', 'اعتبار تا', 'تاریخ انقضا', 'تاریخ پایان اعتبار'])
+        out['reg_date'] = normalize_date(reg)
+    out['renewal_date'] = normalize_date(
+        _after(['تاریخ تمدید', 'تمدید اعتبار', 'اعتبار تا', 'تاریخ انقضا', 'تاریخ پایان اعتبار'])
+    )
 
     # نام فارسی / لاتین اگر صفحه جزئیات جدا داشته باشد
     fa = _after(['نام فارسی', 'عنوان فارسی', 'نام علامت فارسی'])
@@ -201,7 +236,7 @@ def parse_search_results(html_content: str) -> List[Dict[str, Any]]:
         for span in a.find_all('span'):
             text = span.get_text(strip=True)
             if 'تاریخ اظهارنامه' in text:
-                dec_date = text.split(':', 1)[-1].strip()
+                dec_date = normalize_date(text.split(':', 1)[-1].strip())
             elif 'شماره اظهارنامه' in text:
                 dec_no = to_english_digits(text.split(':', 1)[-1].strip())
             elif 'وضعیت پرونده' in text:
@@ -283,8 +318,8 @@ def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
 
         date_text = tds[6].get_text(separator="|", strip=True)
         date_parts = [p for p in date_text.split("|") if p]
-        reg_date = date_parts[0] if len(date_parts) > 0 else ""
-        reg_time = date_parts[1] if len(date_parts) > 1 else ""
+        reg_date = normalize_date(date_parts[0]) if len(date_parts) > 0 else ""
+        reg_time = to_english_digits(date_parts[1]) if len(date_parts) > 1 else ""
 
         status_span = tds[7].find("span")
         status = status_span.get_text(strip=True) if status_span else tds[7].get_text(strip=True)
@@ -316,4 +351,3 @@ def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
             "has_class_5": 0,
         })
     return rows
-

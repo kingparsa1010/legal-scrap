@@ -1,7 +1,7 @@
 """
 تولیدکننده گزارش‌های اکسل با استایل استاندارد و پشتیبانی کامل راست‌به‌چپ (RTL)
 Excel Exporter — mode-aware sheets:
-  Mode 1: ALL SCRAPED RECORDS + ACTIVE ONLY
+  Mode 1: ALL (non-final) + ACTIVE ONLY + REJECTED
   Mode 2: CAPTURED CLASS 5 + MATCHED
 """
 import os
@@ -162,10 +162,11 @@ def export_scan_to_excel(
     matched: Optional[List[Dict[str, Any]]] = None,
     output_dir: Optional[str] = None,
     prefix: str = "گزارش_اسکن",
+    rejected: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     تولید فایل اکسل متناسب با حالت:
-      حالت ۱ → برگه‌های ALL + ACTIVE
+      حالت ۱ → برگه‌های ALL + ACTIVE (+ REJECTED)
       حالت ۲ → برگه‌های CLASS5 (+ MATCHED در صورت وجود نتیجه مقایسه)
     حداقل یکی از ورودی‌ها باید مقدار داشته باشد.
     """
@@ -185,6 +186,8 @@ def export_scan_to_excel(
         _add_record_sheet(wb, "ALL SCRAPED RECORDS", all_records)
     if active is not None:
         _add_record_sheet(wb, "ACTIVE ONLY", active)
+    if rejected is not None:
+        _add_record_sheet(wb, "REJECTED", rejected)
     if class5_records is not None:
         _add_record_sheet(wb, "CAPTURED CLASS 5", class5_records)
     if matched is not None:
