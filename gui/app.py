@@ -2845,7 +2845,7 @@ class TrademarkApp(QMainWindow):
                     return
                 path = export_scan_to_excel(
                     scan_info={'scan_date': time.strftime("%Y/%m/%d %H:%M")},
-                    all_records=other_recs,
+                    all_records=all_recs,
                     active=active_recs,
                     rejected=rejected_recs,
                     prefix="گزارش_حالت_۱",

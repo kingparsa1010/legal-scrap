@@ -22,6 +22,8 @@ HIGH_FILL = PatternFill(start_color="FFD2D2", end_color="FFD2D2", fill_type="sol
 HIGH_FONT = Font(name="Tahoma", size=10, bold=True, color="9C0006")
 MED_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 MED_FONT = Font(name="Tahoma", size=10, bold=True, color="9C6500")
+ACTIVE_FILL = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+ACTIVE_FONT = Font(name="Tahoma", size=10, bold=True, color="166534")
 CELL_FONT = Font(name="Tahoma", size=10)
 LINK_FONT = Font(name="Tahoma", size=10, color="0000FF", underline="single")
 CENTER = Alignment(horizontal="center", vertical="center")
@@ -94,6 +96,9 @@ def _add_record_sheet(wb, title: str, records: List[Dict[str, Any]]):
             cell.font = CELL_FONT
             cell.border = THIN_BORDER
             cell.alignment = RIGHT if c_idx in (3, 4) else CENTER
+            if item.get('is_active') or 'ثبت قطعی شده' in str(item.get('status', '')):
+                cell.fill = ACTIVE_FILL
+                cell.font = ACTIVE_FONT
             if c_idx == 9 and cert_url:
                 cell.hyperlink = cert_url
                 cell.font = LINK_FONT

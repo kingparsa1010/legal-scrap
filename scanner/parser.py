@@ -127,7 +127,7 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
     """
     out: Dict[str, Any] = {
         'title_fa': '', 'title_en': '', 'register_no': '',
-        'reg_date': '', 'renewal_date': '', 'certificate_url': '',
+        'reg_date': '', 'renewal_date': '', 'certificate_url': '', 'workflow_url': '',
     }
     if not html:
         return out
@@ -144,6 +144,17 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         return ''
 
     out['register_no'] = _after(['شماره ثبت', 'شماره اظهارنامه ثبت', 'شماره پرونده ثبت'])
+    if not out['register_no']:
+        m_reg = re.search(r'شماره\\s*ثبت\\s*[:：]?\\s*([۰-۹0-9][۰-۹0-9\\s]*)', text)
+        if m_reg:
+            out['register_no'] = to_english_digits(m_reg.group(1)).replace(' ', '').strip()
+    # صفحه کارتابل به صفحه گردش کار پرونده لینک می‌دهد؛ برای اطلاعات ثبت قطعی آن را نگه می‌داریم.
+    for a in soup.find_all('a', href=True):
+        href = str(a.get('href', '')).strip()
+        label = a.get_text(' ', strip=True)
+        if 'DeclarationSummery' in href or 'گردش کار پرونده' in label:
+            out['workflow_url'] = urljoin(base_url, href)
+            break
     reg = _after(['تاریخ ثبت', 'تاریخ ثبت قطعی'])
     if reg:
         out['reg_date'] = normalize_date(reg)

@@ -111,6 +111,18 @@ def enrich_with_details(
             if getattr(resp, 'status_code', 0) != 200:
                 continue
             detail = parse_declaration_detail(getattr(resp, 'text', ''))
+            # شماره ثبت و تاریخ ثبت قطعی در صفحه گردش کار پرونده قرار دارند.
+            workflow_url = detail.get('workflow_url')
+            if workflow_url:
+                try:
+                    wf_resp = session.get(workflow_url, timeout=15, verify=False)
+                    if getattr(wf_resp, 'status_code', 0) == 200:
+                        workflow_detail = parse_declaration_detail(getattr(wf_resp, 'text', ''))
+                        for key in ('register_no', 'reg_date', 'renewal_date', 'certificate_url'):
+                            if workflow_detail.get(key):
+                                detail[key] = workflow_detail[key]
+                except Exception:
+                    pass
             if detail.get('register_no'):
                 rec['register_no'] = detail['register_no']
             if detail.get('reg_date') and not rec.get('reg_date'):
