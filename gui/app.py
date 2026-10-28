@@ -402,34 +402,43 @@ def _parse_jalali_key(date_raw: str) -> tuple:
     return (y, m, d, hh, mm)
 
 
-def format_date_dmy(date_raw) -> str:
-    """نرمال‌سازی تاریخ به فرمت روز/ماه/سال با ارقام لاتین (مثال: 12/05/1403).
+def format_date_ymd(date_raw) -> str:
+    """نرمال‌سازی تاریخ به فرمت سال/ماه/روز با ارقام لاتین (مثال: 1403/05/12).
 
     ورودی می‌تواند سال/ماه/روز یا روز/ماه/سال، با ارقام فارسی یا لاتین، و گاهی همراه ساعت باشد.
-    اگر تاریخ کامل (روز، ماه، سال) قابل تشخیص نباشد، همان متن با ارقام لاتین برمی‌گردد.
+    اگر تاریخ کامل (سال، ماه، روز) قابل تشخیص نباشد، همان متن با ارقام لاتین برمی‌گردد.
     """
     raw = str(date_raw or "").strip()
     if not raw or raw == "—":
         return "—"
     y, m, d, _hh, _mm = _parse_jalali_key(raw)
     if y and m and d:
-        return f"{d:02d}/{m:02d}/{y:04d}"
+        return f"{y:04d}/{m:02d}/{d:02d}"
     return to_english_digits(raw)
 
 
+# نام قدیمی برای سازگاری با کدهای دیگر
+format_date_dmy = format_date_ymd
+
+
 class DateTableWidgetItem(QTableWidgetItem):
-    """آیتم تاریخ شمسی برای مرتب‌سازی تقویمی با کلیک روی هدر؛ نمایش همیشه روز/ماه/سال لاتین."""
+    """آیتم تاریخ شمسی برای مرتب‌سازی تقویمی با کلیک روی هدر؛ نمایش همیشه سال/ماه/روز لاتین."""
     def __init__(self, date_text: str):
-        super().__init__(format_date_dmy(date_text))
-        self._key = _parse_jalali_key(date_text)
-        self.setData(Qt.ItemDataRole.UserRole, self._key)
+        super().__init__(format_date_ymd(date_text))
+        y, m, d, hh, mm = _parse_jalali_key(date_text)
+        # کلید عددی صحیح (سال، ماه، روز، ساعت، دقیقه). tuple در PyQt به list تبدیل می‌شد
+        # و مرتب‌سازی به مقایسه متنی برمی‌گشت؛ عدد صحیح دست‌نخورده می‌ماند.
+        self._sort_val = y * 10**8 + m * 10**6 + d * 10**4 + hh * 100 + mm
+        self.setData(Qt.ItemDataRole.UserRole, self._sort_val)
         self.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def __lt__(self, other):
+        if isinstance(other, DateTableWidgetItem):
+            return self._sort_val < other._sort_val
         if isinstance(other, QTableWidgetItem):
             other_data = other.data(Qt.ItemDataRole.UserRole)
-            if isinstance(other_data, tuple):
-                return self._key < other_data
+            if isinstance(other_data, (int, float)):
+                return self._sort_val < other_data
         return super().__lt__(other)
 
 
@@ -1731,6 +1740,18 @@ class TrademarkApp(QMainWindow):
         sb.addStretch()
         v.addWidget(sort_bar)
 
+        search_bar = QFrame(self)
+        search_bar.setObjectName("Header")
+        search_layout = QHBoxLayout(search_bar)
+        search_layout.setContentsMargins(12, 6, 12, 6)
+        search_layout.addWidget(QLabel("جست‌وجوی نام علامت:", self))
+        self.txt_table_name_search = QLineEdit(self)
+        self.txt_table_name_search.setPlaceholderText("نام فارسی یا انگلیسی را وارد کنید...")
+        self.txt_table_name_search.setClearButtonEnabled(True)
+        self.txt_table_name_search.textChanged.connect(self._filter_tables_by_name)
+        search_layout.addWidget(self.txt_table_name_search, 1)
+        v.addWidget(search_bar)
+
         self.tabs_mode1 = QTabWidget(self)
         v.addWidget(self.tabs_mode1, stretch=1)
 
@@ -1808,6 +1829,16 @@ class TrademarkApp(QMainWindow):
         )
         self._apply_mode1_default_sort()
         return container
+
+    def _filter_tables_by_name(self, text: str):
+        query = (text or "").strip().casefold()
+        for table in self._mode1_tables() if hasattr(self, "table_all") else []:
+            for row in range(table.rowCount()):
+                values = []
+                for col in (2, 3):
+                    item = table.item(row, col)
+                    if item: values.append(item.text().casefold())
+                table.setRowHidden(row, bool(query) and query not in " ".join(values))
 
     def _mode1_tables(self):
         return [self.table_all, self.table_active, self.table_rejected]
@@ -1963,6 +1994,7 @@ class TrademarkApp(QMainWindow):
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
+        table.setTextElideMode(Qt.TextElideMode.ElideRight)
         header.setHighlightSections(False)
         header.setMinimumSectionSize(60)
         table.verticalHeader().setVisible(False)
@@ -2630,8 +2662,8 @@ class TrademarkApp(QMainWindow):
         title_b = m.get('title_b', '')
         dec_a = m.get('declaration_no_a', '')
         dec_b = m.get('declaration_no_b', '')
-        date_a = format_date_dmy(m.get('declaration_date_a', ''))
-        date_b = format_date_dmy(m.get('declaration_date_b', ''))
+        date_a = format_date_ymd(m.get('declaration_date_a', ''))
+        date_b = format_date_ymd(m.get('declaration_date_b', ''))
 
         self.table_matched.setItem(row, 3, QTableWidgetItem(title_a))
         self.table_matched.setItem(row, 4, QTableWidgetItem(dec_a))
@@ -2802,6 +2834,8 @@ class TrademarkApp(QMainWindow):
             data_store = load_store(DATA_STORE_PATH)
             if self._current_mode == 0:
                 all_recs = [ensure_record_fields(dict(r)) for r in data_store.values()]
+                # ترتیب خروجی: جدیدترین تاریخ ثبت اول (هماهنگ با جدول‌ها)
+                all_recs.sort(key=self._mode1_date_key, reverse=True)
                 active_recs = [r for r in all_recs if _is_active_rec(r)]
                 other_recs = [r for r in all_recs if not _is_active_rec(r)]
                 rejected_recs = [r for r in all_recs if _is_rejected_rec(r)]
@@ -3091,6 +3125,9 @@ class TrademarkApp(QMainWindow):
                 t.setSortingEnabled(s)
                 self._schedule_auto_fit(t)
             self._refresh_stats()
+
+        # اطمینان از ترتیب نهایی بر اساس ستون «تاریخ ثبت» (ستون ۶) طبق انتخاب کاربر
+        self._apply_mode1_default_sort()
 
         self._refresh_store_counts()
         if self._current_mode == 0:
