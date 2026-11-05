@@ -15,7 +15,14 @@ def _validate_first_page(html: str) -> List[Dict[str, Any]]:
     records = parse_search_results(html)
     if records:
         return records
-    if "موردی یافت نشد" in html:
+    # The server also sets isSearchValid=false for a valid search with no hits.
+    # Inspect the visible message before interpreting that generic flag.
+    visible_text = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.I | re.S)
+    visible_text = re.sub(r"<[^>]+>", " ", visible_text)
+    visible_text = " ".join(visible_text.replace("\u200c", " ").split())
+    if any(message in visible_text for message in (
+        "موردی یافت نشد", "هیچ مورد یافت نشد", "هیچ موردی یافت نشد",
+    )):
         return []
     if not html.strip():
         raise ScanValidationError("پاسخ دریافتی از سامانه ثبت خالی بود.")
@@ -103,3 +110,4 @@ def collect_targeted_scan(
 
         page += 1
     return collected
+

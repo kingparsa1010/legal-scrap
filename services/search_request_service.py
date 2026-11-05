@@ -2,6 +2,9 @@
 from dataclasses import dataclass
 from typing import Any, Dict
 from scanner.parser import to_english_digits
+from datetime import datetime, timezone, timedelta
+
+import jdatetime
 
 
 class SearchRequestError(ValueError):
@@ -24,14 +27,20 @@ def build_search_request(values: Dict[str, Any], is_today: bool) -> SearchReques
     item_title = str(values.get("item_title") or "").strip()
     declaration_no = _digits(values.get("declaration_no"))
     register_no = _digits(values.get("register_no"))
-    from_date = None if is_today else (_digits(values.get("from_issue_date")) or None)
-    to_date = None if is_today else (_digits(values.get("to_issue_date")) or None)
+    if is_today:
+        # Use the Iranian calendar day even if the computer timezone differs.
+        tehran_date = datetime.now(timezone(timedelta(hours=3, minutes=30))).date()
+        today = jdatetime.date.fromgregorian(date=tehran_date).strftime("%Y/%m/%d")
+        from_date = to_date = today
+    else:
+        from_date = _digits(values.get("from_issue_date")) or None
+        to_date = _digits(values.get("to_issue_date")) or None
 
     if not is_today and not any((from_date, item_title, declaration_no, register_no)):
         raise SearchRequestError("حداقل تاریخ انتشار، عنوان، شماره اظهارنامه یا شماره ثبت لازم است.")
 
     if is_today:
-        scan_date = "منتشر شده امروز (روزنامه جاری)"
+        scan_date = from_date
         title_summary = f"طبقه {class_value} — آگهی‌های امروز"
     else:
         scan_date = from_date or "سفارشی"
@@ -44,7 +53,7 @@ def build_search_request(values: Dict[str, Any], is_today: bool) -> SearchReques
             title_summary += f" («{item_title[:15]}» )"
 
     params = {
-        "GetCurrentIssue": is_today,
+        "GetCurrentIssue": False,
         "FromIssueDate": from_date,
         "ToIssueDate": to_date,
         "SignProductId": class_value,
@@ -64,3 +73,4 @@ def build_search_request(values: Dict[str, Any], is_today: bool) -> SearchReques
         "LegalOwnerNationalityNo": _digits(values.get("legal_national_no")) or None,
     }
     return SearchRequest(params=params, scan_date=scan_date, title_summary=title_summary)
+

@@ -144,8 +144,13 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         return ''
 
     out['register_no'] = _after(['شماره ثبت', 'شماره اظهارنامه ثبت', 'شماره پرونده ثبت'])
+    # ساختار واقعی صفحه گردش کار: <strong>شماره ثبت:</strong> 528670
     if not out['register_no']:
-        m_reg = re.search(r'شماره\\s*ثبت\\s*[:：]?\\s*([۰-۹0-9][۰-۹0-9\\s]*)', text)
+        m_strong = re.search(r'<strong[^>]*>\s*شماره\s*ثبت\s*[:：]?\s*</strong>\s*([۰-۹0-9][۰-۹0-9\s]*)', html, re.I)
+        if m_strong:
+            out['register_no'] = to_english_digits(m_strong.group(1)).replace(' ', '').strip()
+    if not out['register_no']:
+        m_reg = re.search(r'شماره\s*ثبت\s*[:：]?\s*([۰-۹0-9][۰-۹0-9\s]*)', text)
         if m_reg:
             out['register_no'] = to_english_digits(m_reg.group(1)).replace(' ', '').strip()
     # صفحه کارتابل به صفحه گردش کار پرونده لینک می‌دهد؛ برای اطلاعات ثبت قطعی آن را نگه می‌داریم.
