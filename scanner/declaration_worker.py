@@ -140,7 +140,7 @@ class DeclarationScrapeWorker(QThread):
                 )
             return
 
-        existing_store = load_store(DATA_STORE_PATH) if self.mode == "new_only" else {}
+        existing_store = load_store(DATA_STORE_PATH)
         try:
             store, newly_scraped, new_count, total_records = collect_declarations(
                 session=session,
@@ -162,18 +162,18 @@ class DeclarationScrapeWorker(QThread):
             return
 
         # تکمیل فیلدهای جدید (شماره ثبت، تاریخ تمدید، لینک گواهی) از صفحه جزئیات
-        if newly_scraped:
+        if store:
             try:
                 self.progress_changed.emit(91, "در حال تکمیل شماره ثبت و تاریخ تمدید از صفحه جزئیات...")
                 enrich_with_details(
                     session,
-                    newly_scraped,
+                    list(store.values()),
                     is_running=lambda: self._is_running,
                     on_progress=self.progress_changed.emit,
-                    limit=300,
+                    limit=None,
                 )
             except Exception:
-                pass
+                logger.exception("Registration enrichment failed")
 
         try:
             complete_declaration_scan(
@@ -194,4 +194,5 @@ class DeclarationScrapeWorker(QThread):
                    else f"اسکن کامل تکمیل شد! {len(store)} رکورد به‌روزرسانی شد.")
         self.progress_changed.emit(100, message)
         self.scan_completed.emit(len(store), new_count, 0, self.docx_path)
+
 

@@ -107,6 +107,7 @@ def ensure_record_fields(record: Dict[str, Any]) -> Dict[str, Any]:
     record.setdefault('register_no', record.get('register_no', '') or '')
     record.setdefault('renewal_date', record.get('renewal_date', '') or '')
     record.setdefault('certificate_url', record.get('certificate_url', '') or '')
+    record.setdefault('registration_date', '')
     # تاریخ ثبت میل به reg_date / declaration_date
     if not record.get('reg_date') and record.get('declaration_date'):
         record['reg_date'] = record.get('declaration_date')
@@ -144,13 +145,8 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         return ''
 
     out['register_no'] = _after(['شماره ثبت', 'شماره اظهارنامه ثبت', 'شماره پرونده ثبت'])
-    # ساختار واقعی صفحه گردش کار: <strong>شماره ثبت:</strong> 528670
     if not out['register_no']:
-        m_strong = re.search(r'<strong[^>]*>\s*شماره\s*ثبت\s*[:：]?\s*</strong>\s*([۰-۹0-9][۰-۹0-9\s]*)', html, re.I)
-        if m_strong:
-            out['register_no'] = to_english_digits(m_strong.group(1)).replace(' ', '').strip()
-    if not out['register_no']:
-        m_reg = re.search(r'شماره\s*ثبت\s*[:：]?\s*([۰-۹0-9][۰-۹0-9\s]*)', text)
+        m_reg = re.search(r'شماره\\s*ثبت\\s*[:：]?\\s*([۰-۹0-9][۰-۹0-9\\s]*)', text)
         if m_reg:
             out['register_no'] = to_english_digits(m_reg.group(1)).replace(' ', '').strip()
     # صفحه کارتابل به صفحه گردش کار پرونده لینک می‌دهد؛ برای اطلاعات ثبت قطعی آن را نگه می‌داریم.
@@ -160,7 +156,13 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         if 'DeclarationSummery' in href or 'گردش کار پرونده' in label:
             out['workflow_url'] = urljoin(base_url, href)
             break
-    reg = _after(['تاریخ ثبت', 'تاریخ ثبت قطعی'])
+    # Labels and values may be separated by HTML tags and line breaks.
+    flat = to_english_digits(soup.get_text(" ", strip=True))
+    number = re.search(r'شماره\s*ثبت\s*[:：]\s*([0-9]+)', flat)
+    if number:
+        out['register_no'] = number.group(1)
+    date_match = re.search(r'تاریخ\s*ثبت(?:\s*قطعی)?\s*[:：]\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})', flat)
+    reg = date_match.group(1) if date_match else _after(['تاریخ ثبت', 'تاریخ ثبت قطعی'])
     if reg:
         out['reg_date'] = normalize_date(reg)
     out['renewal_date'] = normalize_date(
@@ -367,3 +369,4 @@ def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
             "has_class_5": 0,
         })
     return rows
+

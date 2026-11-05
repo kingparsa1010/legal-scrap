@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from scanner.renewal import renewal_info
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -85,8 +86,8 @@ def _add_record_sheet(wb, title: str, records: List[Dict[str, Any]]):
             _clean_xml(item.get('title_fa') or item.get('title', '')),
             _clean_xml(item.get('status', '')),
             _clean_xml(item.get('register_no', '')),
-            _clean_xml(item.get('reg_date') or item.get('declaration_date', '')),
-            _clean_xml(item.get('renewal_date', '')),
+            _clean_xml(item.get('registration_date', '') if 'ثبت قطعی شده' in str(item.get('status', '')) else (item.get('reg_date') or item.get('declaration_date', ''))),
+            _clean_xml(renewal_info(item)[2] if 'ثبت قطعی شده' in str(item.get('status', '')) else item.get('renewal_date', '')),
             cert_url or "—",
         ]
         ws.append(row_data)
@@ -204,3 +205,4 @@ def export_scan_to_excel(
     _autofit(wb)
     wb.save(filepath)
     return filepath
+

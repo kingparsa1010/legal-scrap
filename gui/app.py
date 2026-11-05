@@ -44,6 +44,7 @@ from scanner.database import (
     init_db, add_watchlist_item,
     save_search_history, get_search_history
 )
+from scanner.renewal import renewal_info
 from scanner.exporter import export_scan_to_excel, DEFAULT_REPORTS_DIR
 from services.search_request_service import build_search_request, SearchRequestError
 
@@ -822,6 +823,10 @@ class TrademarkApp(QMainWindow):
 
         # نمایش آنی پنجره در کسری از ثانیه (کمتر از ۰.۲ ثانیه)
         # و موکول کردن بارگذاری جدول‌ها و نشست به ۴۰ میلی‌ثانیه بعد از رندر پنجره
+        self._renewal_day = time.strftime("%Y-%m-%d")
+        self._renewal_timer = QTimer(self)
+        self._renewal_timer.timeout.connect(self._refresh_renewal_countdowns)
+        self._renewal_timer.start(60000)
         QTimer.singleShot(40, self._deferred_startup)
 
     def _deferred_startup(self):
@@ -2591,6 +2596,12 @@ class TrademarkApp(QMainWindow):
             item.setFont(f)
         return item
 
+    def _refresh_renewal_countdowns(self):
+        day = time.strftime("%Y-%m-%d")
+        if day != self._renewal_day:
+            self._renewal_day = day
+            self._load_data_store_table()
+
     def _set_table_active_row_items(self, row: int, r: dict):
         r = ensure_record_fields(dict(r))
         title = r.get('title', '')
@@ -2598,7 +2609,7 @@ class TrademarkApp(QMainWindow):
         title_fa = r.get('title_fa') or title
         title_en = r.get('title_en', '')
         reg_no = r.get('register_no', '')
-        reg_date = r.get('reg_date') or r.get('declaration_date', '')
+        reg_date = r.get('registration_date', '')
         renewal = r.get('renewal_date', '')
         cert_url = r.get('certificate_url') or r.get('detail_url', '')
 
@@ -2609,7 +2620,7 @@ class TrademarkApp(QMainWindow):
         self.table_active.setItem(row, 4, self._status_item(r.get('status', '')))
         self.table_active.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
         self.table_active.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
-        self.table_active.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
+        self.table_active.setItem(row, 7, QTableWidgetItem(renewal_info(r)[2]))
         self.table_active.setItem(row, 8, self._make_action_item(cert_url, title))
 
     def _set_table_class5_row_items(self, row: int, r: dict):
@@ -3239,6 +3250,8 @@ class TrademarkApp(QMainWindow):
 
     def on_decl_scan_failed(self, error_msg: str):
         logger.error(f"اسکن اظهارنامه‌ها با شکست مواجه شد: {error_msg}")
+        # Discard the incomplete live preview and restore the committed snapshot.
+        self.load_store_into_gui(load_store(DATA_STORE_PATH))
         self._refresh_store_counts()
         self.btn_decl_new.setEnabled(True)
         self.btn_decl_full.setEnabled(True)
@@ -3509,3 +3522,4 @@ def run_app():
 
 if __name__ == '__main__':
     run_app()
+

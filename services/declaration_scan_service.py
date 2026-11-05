@@ -1,6 +1,9 @@
 """Collection logic for the authenticated declaration-list scan."""
 import re
 import time
+import logging
+from urllib.parse import urljoin, urlsplit
+logger = logging.getLogger("legal_scrap.registration")
 from typing import Any, Callable, Dict, List, Tuple
 from scanner.parser import parse_declaration_page, parse_declaration_detail, ensure_record_fields
 
@@ -68,6 +71,15 @@ def collect_declarations(
             key = entry["dec_no_id"]
             if mode == "new_only" and key in store:
                 continue
+            # The list page has no registration metadata. Keep verified detail
+            # fields for the same declaration while refreshing list/status data.
+            previous = existing_store.get(key, {})
+            for field in ('register_no', 'registration_date', 'renewal_date',
+                          'certificate_url', 'workflow_url', 'registration_fetch_status'):
+                if previous.get(field) and not entry.get(field):
+                    entry[field] = previous[field]
+            if entry.get('registration_date'):
+                entry['reg_date'] = entry['registration_date']
             ensure_record_fields(entry)
             store[key] = entry
             collected.append(entry)
@@ -90,7 +102,7 @@ def enrich_with_details(
     records: List[Dict[str, Any]],
     is_running: Callable[[], bool] = lambda: True,
     on_progress: Callable[[int, str], None] = lambda *_: None,
-    limit: int = 300,
+    limit: int = None,
 ) -> int:
     """تکمیل شماره ثبت، تاریخ تمدید و لینک گواهی با مراجعه به صفحه جزئیات هر پرونده.
 
@@ -98,36 +110,44 @@ def enrich_with_details(
     هر خطا نادیده گرفته می‌شود و ستون مربوطه «—» می‌ماند. خروجی: تعداد غنی‌شده.
     """
     enriched = 0
-    targets = [r for r in records if r.get('detail_url')][:max(0, limit)]
+    targets = [r for r in records if r.get("detail_url")]
+    targets.sort(key=lambda r: "ثبت قطعی شده" not in str(r.get("status", "")))
+    if limit is not None:
+        targets = targets[:max(0, limit)]
     total = len(targets)
     for i, rec in enumerate(targets, start=1):
         if not is_running():
             break
         # اگر هر سه فیلد از قبل پر است، درخواست نزن
-        if rec.get('register_no') and rec.get('renewal_date') and rec.get('certificate_url'):
+        if rec.get('register_no') and rec.get('registration_date'):
             continue
         try:
             resp = session.get(rec['detail_url'], timeout=15, verify=False)
             if getattr(resp, 'status_code', 0) != 200:
-                continue
-            detail = parse_declaration_detail(getattr(resp, 'text', ''))
+                raise ValueError('HTTP ' + str(getattr(resp, 'status_code', 0)))
+            if any(x in str(getattr(resp, 'url', '')).lower() for x in ('signin', '/login')):
+                raise ValueError('نشست منقضی شده؛ دریافت صفحه ورود به جای پرونده')
+            detail = parse_declaration_detail(getattr(resp, 'text', ''), getattr(resp, 'url', '') or rec['detail_url'])
             # شماره ثبت و تاریخ ثبت قطعی در صفحه گردش کار پرونده قرار دارند.
-            workflow_url = detail.get('workflow_url')
+            workflow_url = detail.get('workflow_url') or rec.get('workflow_url')
+            if workflow_url:
+                workflow_url = urljoin(getattr(resp, 'url', '') or rec['detail_url'], workflow_url)
+                rec['workflow_url'] = workflow_url
             if workflow_url:
                 try:
                     wf_resp = session.get(workflow_url, timeout=15, verify=False)
                     if getattr(wf_resp, 'status_code', 0) == 200:
-                        workflow_detail = parse_declaration_detail(getattr(wf_resp, 'text', ''))
+                        workflow_detail = parse_declaration_detail(getattr(wf_resp, 'text', ''), getattr(wf_resp, 'url', '') or workflow_url)
                         for key in ('register_no', 'reg_date', 'renewal_date', 'certificate_url'):
                             if workflow_detail.get(key):
                                 detail[key] = workflow_detail[key]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Workflow request failed: %s", type(exc).__name__)
             if detail.get('register_no'):
                 rec['register_no'] = detail['register_no']
-            if detail.get('reg_date') and not rec.get('reg_date'):
+            if detail.get('reg_date'):
+                rec['registration_date'] = detail['reg_date']
                 rec['reg_date'] = detail['reg_date']
-                rec['declaration_date'] = detail['reg_date']
             if detail.get('renewal_date'):
                 rec['renewal_date'] = detail['renewal_date']
             if detail.get('certificate_url'):
@@ -137,8 +157,15 @@ def enrich_with_details(
             if detail.get('title_en'):
                 rec['title_en'] = detail['title_en']
             ensure_record_fields(rec)
-            enriched += 1
-        except Exception:
+            if rec.get('registration_date'):
+                rec['registration_fetch_status'] = 'ok'
+                enriched += 1
+            elif 'ثبت قطعی شده' in str(rec.get('status', '')):
+                rec['registration_fetch_status'] = ('workflow_missing_date' if workflow_url else 'workflow_link_missing')
+                logger.warning("Registration unavailable: declaration=%s reason=%s page=%s", rec.get('declaration_no', ''), rec['registration_fetch_status'], urlsplit(getattr(resp, 'url', '') or rec['detail_url']).path)
+        except Exception as exc:
+            rec['registration_fetch_status'] = 'request_failed'
+            logger.warning("Registration request failed: declaration=%s error=%s", rec.get('declaration_no', ''), type(exc).__name__)
             continue
         if i % 10 == 0:
             try:
@@ -146,4 +173,9 @@ def enrich_with_details(
             except Exception:
                 pass
         time.sleep(0.1)
+    registered = [r for r in targets if 'ثبت قطعی شده' in str(r.get('status', ''))]
+    missing = sum(not r.get('registration_date') for r in registered)
+    logger.info("Registration summary: checked=%s registered=%s missing=%s", total, len(registered), missing)
+    on_progress(91, f"تاریخ ثبت قطعی: {len(registered) - missing} تکمیل، {missing} ناموفق")
     return enriched
+
