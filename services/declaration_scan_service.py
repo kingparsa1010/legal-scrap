@@ -3,7 +3,7 @@ import re
 import time
 import logging
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
 logger = logging.getLogger("legal_scrap.registration")
 from typing import Any, Callable, Dict, List, Tuple
 from scanner.parser import parse_declaration_page, parse_declaration_detail, ensure_record_fields, to_english_digits
@@ -58,7 +58,7 @@ def collect_declarations(
                 if not is_running():
                     break
                 try:
-                    response = session.get(BASE_LIST_URL.format(total_record=total_records or '', page=page), timeout=30, verify=False)
+                    response = session.get(BASE_LIST_URL.format(total_record=total_records or '', page=page), timeout=12, verify=False)
                     response.raise_for_status()
                     if any(part in str(getattr(response, 'url', '')).lower() for part in ('signin', '/login')):
                         raise ValueError("نشست منقضی شده است")
@@ -69,7 +69,7 @@ def collect_declarations(
                 except Exception as exc:
                     failure = type(exc).__name__
                 if attempt < 2:
-                    time.sleep(0.5 * (attempt + 1))
+                    time.sleep(0.15 * (attempt + 1))
             if not rows:
                 if mode == "full_rescan" and is_running():
                     raise IncompleteFullScan(f"صفحه {page} پس از ۳ تلاش تأیید نشد ({failure})؛ {len(seen)} از {total_records} رکورد دریافت شد.")
@@ -85,12 +85,16 @@ def collect_declarations(
             seen.add(key)
             already_known = key in existing_store
             previous = existing_store.get(key, {})
-            for field in ('register_no', 'registration_date', 'renewal_date', 'certificate_url', 'workflow_url', 'registration_fetch_status', 'queue_count', 'queue_checked_at', 'workflow_registration_date'):
+            for field in ('register_no', 'registration_date', 'renewal_date', 'certificate_url', 'print_url', 'workflow_url', 'steps_url', 'registration_fetch_status', 'queue_count', 'queue_checked_at', 'workflow_registration_date'):
                 if previous.get(field) is not None and previous.get(field) != '' and (entry.get(field) is None or entry.get(field) == ''):
                     entry[field] = previous[field]
             if entry.get('registration_date'):
                 entry['reg_date'] = entry['registration_date']
             ensure_record_fields(entry)
+            # لینک‌های قدیمیِ Summary بدون DID فقط فهرست عمومی را باز می‌کنند؛
+            # آن‌ها نباید به‌عنوان گردش کار ذخیره یا نمایش داده شوند.
+            if entry.get('workflow_url') and 'DID=' not in str(entry.get('workflow_url')):
+                entry['workflow_url'] = ''
             store[key] = entry
             # Refresh known rows without counting or emitting them as new rows.
             if mode != "new_only" or not already_known:
@@ -100,7 +104,7 @@ def collect_declarations(
         on_progress(min(90, 15 + int(75 * len(seen) / max(1, total_records or len(seen)))), f"صفحه {page}؛ {len(seen)} رکورد یکتا")
         if total_records is not None and len(seen) >= total_records:
             break
-        time.sleep(0.15)
+        # مکث مصنوعی بین صفحات حذف شده تا اسکن کامل سریع‌تر انجام شود.
     if mode == "full_rescan" and is_running() and len(seen) != total_records:
         raise IncompleteFullScan(f"اسکن ناقص است: {len(seen)} رکورد یکتا از {total_records}؛ مخزن قبلی جایگزین نمی‌شود.")
     return store, collected, len(collected), total_records or len(seen)
@@ -132,7 +136,8 @@ def enrich_with_details(
         # اگر هر سه فیلد از قبل پر است، درخواست نزن
         # Re-read workflow status for old records as well as queue updates.
         try:
-            resp = session.get(rec['detail_url'], timeout=15, verify=False)
+            # timeout کوتاه نگه داشته می‌شود تا یک پرونده معیوب کل جستجوی سریع را معطل نکند.
+            resp = session.get(rec['detail_url'], timeout=5, verify=False)
             if getattr(resp, 'status_code', 0) != 200:
                 raise ValueError('HTTP ' + str(getattr(resp, 'status_code', 0)))
             if any(x in str(getattr(resp, 'url', '')).lower() for x in ('signin', '/login')):
@@ -145,12 +150,21 @@ def enrich_with_details(
             # شماره ثبت و تاریخ ثبت قطعی در صفحه گردش کار پرونده قرار دارند.
             workflow_detail = detail
             workflow_url = detail.get('workflow_url') or rec.get('workflow_url')
+            # صفحه‌ای که کاربر باید ببیند، Steps است؛ Summary بدون DID فقط فهرست را نشان می‌دهد.
+            parts = urlsplit(getattr(resp, 'url', '') or rec['detail_url'])
+            query = parse_qs(parts.query)
+            token = (query.get('ID') or [''])[0]
+            dec_no = re.sub(r'[^0-9]', '', to_english_digits(str(rec.get('dec_no_display') or rec.get('declaration_no') or '')))
+            if token and dec_no:
+                rec['steps_url'] = f"{parts.scheme or 'https'}://{parts.netloc or 'ipm.ssaa.ir'}/CA/Steps?" + urlencode({'Type': 'BusinessSign', 'DecNo': dec_no, 'ID': token})
+            if workflow_url and 'DID=' not in str(workflow_url):
+                workflow_url = ''
             if workflow_url:
                 workflow_url = urljoin(getattr(resp, 'url', '') or rec['detail_url'], workflow_url)
                 rec['workflow_url'] = workflow_url
             if workflow_url:
                 try:
-                    wf_resp = session.get(workflow_url, timeout=15, verify=False)
+                    wf_resp = session.get(workflow_url, timeout=5, verify=False)
                     if getattr(wf_resp, 'status_code', 0) == 200:
                         workflow_detail = parse_declaration_detail(getattr(wf_resp, 'text', ''), getattr(wf_resp, 'url', '') or workflow_url)
                         workflow_valid = (
@@ -202,6 +216,8 @@ def enrich_with_details(
                 rec['renewal_date'] = detail['renewal_date']
             if detail.get('certificate_url'):
                 rec['certificate_url'] = detail['certificate_url']
+            if detail.get('print_url'):
+                rec['print_url'] = detail['print_url']
             if detail.get('title_fa'):
                 rec['title_fa'] = detail['title_fa']
             if detail.get('title_en'):
@@ -222,7 +238,7 @@ def enrich_with_details(
                 on_progress(90, f"تکمیل جزئیات پرونده‌ها ({i}/{total})...")
             except Exception:
                 pass
-        time.sleep(0.1)
+        # بدون مکث مصنوعی؛ کنترل نرخ درخواست را timeout و سرور انجام می‌دهند.
     registered = [r for r in targets if 'ثبت قطعی شده' in str(r.get('status', ''))]
     missing = sum(not r.get('registration_date') for r in registered)
     logger.info("Registration summary: checked=%s registered=%s missing=%s", total, len(registered), missing)

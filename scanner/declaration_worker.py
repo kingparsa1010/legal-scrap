@@ -165,9 +165,22 @@ class DeclarationScrapeWorker(QThread):
         if store:
             try:
                 self.progress_changed.emit(91, "در حال تکمیل شماره ثبت و تاریخ تمدید از صفحه جزئیات...")
+                # در جستجوی سریع، رکوردهای ثبت قطعی موجود هم باید بازخوانی شوند؛
+                # وگرنه نوبت و تاریخ تمدید تب ثبت قطعی قدیمی می‌ماند.
+                # رکوردهای غیرنهایی فقط در صورت تازه‌بودن بررسی می‌شوند تا اسکن سریع بماند.
+                if self.mode == "new_only":
+                    targets = list(newly_scraped)
+                    known_ids = {str(r.get('dec_no_id') or r.get('declaration_no') or '') for r in targets}
+                    targets.extend(
+                        r for r in store.values()
+                        if 'ثبت قطعی شده' in str(r.get('status', ''))
+                        and str(r.get('dec_no_id') or r.get('declaration_no') or '') not in known_ids
+                    )
+                else:
+                    targets = list(store.values())
                 enrich_with_details(
                     session,
-                    list(store.values()),
+                    targets,
                     is_running=lambda: self._is_running,
                     on_progress=self.progress_changed.emit,
                     limit=None,

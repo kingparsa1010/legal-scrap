@@ -8,6 +8,8 @@ import re
 import subprocess
 import time
 import webbrowser
+import os.path
+from urllib.parse import urlsplit, parse_qs, urlencode
 from typing import List, Optional, Tuple, Dict, Any
 
 from PyQt6.QtWidgets import (
@@ -16,7 +18,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QProgressBar, QGroupBox, QSpinBox,
     QMessageBox, QFrame, QScrollArea, QSizePolicy, QAbstractItemView,
     QSplitter, QStyleFactory, QDialog, QPlainTextEdit, QMenu, QStackedWidget,
-    QRadioButton, QButtonGroup, QStyledItemDelegate, QStyleOptionViewItem
+    QRadioButton, QButtonGroup, QStyledItemDelegate, QStyleOptionViewItem, QFileDialog
 )
 from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QRect, QPoint, QEvent, QModelIndex, QSize
 from PyQt6.QtGui import QPixmap, QFont, QColor, QCursor, QPalette, QPainter, QPen, QBrush, QIcon
@@ -32,7 +34,7 @@ from scanner.worker import ScanWorker
 from scanner.auth import (
     perform_browser_login,
     get_saved_user_name, has_account_saved_data, has_saved_session,
-    get_saved_credentials, save_credentials
+    get_saved_credentials, save_credentials, get_authenticated_session
 )
 from scanner.declaration_worker import DeclarationScrapeWorker, WORD_OUTPUT_PATH
 from scanner.parser import is_finally_registered, is_rejected_status, to_english_digits, ensure_record_fields
@@ -679,7 +681,7 @@ class ActionCellDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(copy_rect, 5, 5)
 
         painter.setPen(fg_c)
-        painter.drawText(copy_rect, Qt.AlignmentFlag.AlignCenter, "✅" if is_copied else "📋")
+        painter.drawText(copy_rect, Qt.AlignmentFlag.AlignCenter, "⬇️")
 
         painter.restore()
 
@@ -731,16 +733,8 @@ class ActionCellDelegate(QStyledItemDelegate):
                         self.app.open_in_webview(url, title)
                     return True
                 elif copy_rect.contains(pos):
-                    if hasattr(self.app, "copy_url_to_clipboard"):
-                        self.app.copy_url_to_clipboard(url, title)
-                    self._copied_cell = (index.row(), index.column())
-                    if table:
-                        table.viewport().update(option.rect)
-                    def reset_copied():
-                        self._copied_cell = None
-                        if table:
-                            table.viewport().update(option.rect)
-                    QTimer.singleShot(1500, reset_copied)
+                    if hasattr(self.app, "download_print_declaration"):
+                        self.app.download_print_declaration(data.get("download_url") or url, title)
                     return True
             elif event.button() == Qt.MouseButton.RightButton:
                 if view_rect.contains(pos) or copy_rect.contains(pos):
@@ -2484,6 +2478,30 @@ class TrademarkApp(QMainWindow):
         logger.info(f"آدرس پرونده در کلیپ‌بورد کپی شد: {url}")
         self.lbl_decl_status.setText(f"📋 لینک پرونده کپی شد: {title or url[:45]}")
 
+    def download_print_declaration(self, url: str, title: str = ""):
+        url = self._normalize_url(url)
+        if not url:
+            self._msg("warning", "دانلود", "لینک نسخه چاپی اظهارنامه موجود نیست.")
+            return
+        name = re.sub(r'[^\w\-آ-ی]+', '_', title or "اظهارنامه")
+        path, _ = QFileDialog.getSaveFileName(self, "ذخیره فایل اظهارنامه", name, "فایل اظهارنامه (*.*)")
+        if not path:
+            return
+        try:
+            response = get_authenticated_session().get(url, timeout=30, verify=False)
+            response.raise_for_status()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            disposition = response.headers.get("Content-Disposition") or ""
+            ext = ".pdf" if "application/pdf" in content_type else ".zip" if "zip" in content_type else ".bin"
+            if "." not in os.path.basename(path):
+                path += ext
+            with open(path, "wb") as handle:
+                handle.write(response.content)
+            self.lbl_decl_status.setText(f"نسخه چاپی ذخیره شد: {path}")
+        except Exception as exc:
+            logger.exception("Print declaration download failed")
+            self._msg("critical", "خطا در دانلود", f"دانلود نسخه چاپی انجام نشد:\n{exc}")
+
     def open_in_webview(self, url: str, title: str = ""):
         """باز کردن پرونده در پنجره بومی WebView2 ویندوز با نوار ابزار کپی لینک."""
         url = self._normalize_url(url)
@@ -2594,15 +2612,31 @@ class TrademarkApp(QMainWindow):
             return QColor("#FEE2E2"), QColor("#991B1B")
         return QColor("#FEF3C7"), QColor("#92400E")
 
-    def _make_action_item(self, url: str, title: str = "") -> QTableWidgetItem:
+    def _make_action_item(self, url: str, title: str = "", download_url: str = "") -> QTableWidgetItem:
         item = QTableWidgetItem()
         normalized = self._normalize_url(url)
-        item.setData(Qt.ItemDataRole.UserRole, {"url": normalized, "title": title})
+        item.setData(Qt.ItemDataRole.UserRole, {"url": normalized, "download_url": self._normalize_url(download_url), "title": title})
         if normalized:
             item.setToolTip("کلیک چپ: مشاهده در وب‌ویو یا کپی لینک | راست کلیک: گزینه‌ها")
         else:
             item.setToolTip("لینک پرونده موجود نیست")
         return item
+
+    def _steps_url_for_record(self, record: dict) -> str:
+        """ساخت لینک صفحه Steps حتی برای رکوردهای قدیمی که steps_url ندارند."""
+        existing = str(record.get('steps_url') or '').strip()
+        if existing:
+            return existing
+        source = str(record.get('detail_url') or record.get('workflow_url') or '').strip()
+        if '/CA/Steps' in source:
+            return source
+        parts = urlsplit(source)
+        query = parse_qs(parts.query)
+        token = (query.get('ID') or [''])[0]
+        dec_no = re.sub(r'[^0-9]', '', to_english_digits(str(record.get('dec_no_display') or record.get('declaration_no') or '')))
+        if token and dec_no:
+            return f"https://ipm.ssaa.ir/CA/Steps?" + urlencode({'Type': 'BusinessSign', 'DecNo': dec_no, 'ID': token}) + '#'
+        return source
 
     def _status_item(self, status: str) -> QTableWidgetItem:
         """سلول وضعیت با رنگ مخصوص هر وضعیت (متناسب با تم روشن/تیره)."""
@@ -2616,6 +2650,29 @@ class TrademarkApp(QMainWindow):
             f = item.font()
             f.setBold(True)
             item.setFont(f)
+        return item
+
+    def _renewal_days(self, record: dict):
+        try:
+            return renewal_info(record)[1]
+        except Exception:
+            return None
+
+    def _mode1_visible_records(self, records: list) -> list:
+        # همه پرونده‌ها نمایش داده می‌شوند؛ موعدهای خیلی قدیمی فقط تاریخ تمدید خالی دارند.
+        return list(records)
+
+    def _renewal_display(self, record: dict) -> str:
+        days = self._renewal_days(record)
+        if days is not None and days < -245:
+            return ""
+        return renewal_info(record)[2]
+
+    def _mark_renewal_item(self, item: QTableWidgetItem, record: dict):
+        days = self._renewal_days(record)
+        if days is not None and days <= 10:
+            item.setBackground(QColor("#FEE2E2")); item.setForeground(QColor("#B91C1C"))
+            f = item.font(); f.setBold(True); item.setFont(f)
         return item
 
     def _refresh_renewal_countdowns(self):
@@ -2645,7 +2702,7 @@ class TrademarkApp(QMainWindow):
         reg_no = r.get('register_no', '')
         reg_date = r.get('workflow_registration_date', '')
         renewal = r.get('renewal_date', '')
-        cert_url = r.get('workflow_url') or r.get('detail_url', '')
+        cert_url = self._steps_url_for_record(r)
 
         self.table_active.setItem(row, 0, NumericTableWidgetItem(row + 1))
         self.table_active.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
@@ -2654,8 +2711,8 @@ class TrademarkApp(QMainWindow):
         self.table_active.setItem(row, 4, self._status_item(r.get('status', '')))
         self.table_active.setItem(row, 5, QTableWidgetItem(str(reg_no or "")))
         self.table_active.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
-        self.table_active.setItem(row, 7, QTableWidgetItem(renewal_info(r)[2]))
-        self.table_active.setItem(row, 8, self._make_action_item(cert_url, title))
+        self.table_active.setItem(row, 7, self._mark_renewal_item(QTableWidgetItem(self._renewal_display(r)), r))
+        self.table_active.setItem(row, 8, self._make_action_item(cert_url, title, r.get('print_url', '')))
         self.table_active.setItem(row, 9, self._queue_item(r))
 
     def _set_table_class5_row_items(self, row: int, r: dict):
@@ -2730,7 +2787,7 @@ class TrademarkApp(QMainWindow):
         reg_no = r.get('register_no', '')
         reg_date = r.get('reg_date') or r.get('declaration_date', '')
         renewal = r.get('renewal_date', '')
-        cert_url = r.get('workflow_url') or r.get('detail_url', '')
+        cert_url = self._steps_url_for_record(r)
 
         tbl.setItem(row, 0, NumericTableWidgetItem(row + 1))
         tbl.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
@@ -2739,8 +2796,9 @@ class TrademarkApp(QMainWindow):
         tbl.setItem(row, 4, self._status_item(r.get('status', '')))
         tbl.setItem(row, 5, QTableWidgetItem(str(reg_no or "")))
         tbl.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
-        tbl.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
-        tbl.setItem(row, 8, self._make_action_item(cert_url, title))
+        renewal_text = self._renewal_display(r) if renewal else ""
+        tbl.setItem(row, 7, self._mark_renewal_item(DateTableWidgetItem(renewal_text), r))
+        tbl.setItem(row, 8, self._make_action_item(cert_url, title, r.get('print_url', '')))
         tbl.setItem(row, 9, self._queue_item(r))
 
     def add_to_table_active(self, r: dict):
@@ -3150,7 +3208,7 @@ class TrademarkApp(QMainWindow):
             self._refresh_stats()
             return
 
-        sorted_records = self._sorted_mode1(list(store.values()))
+        sorted_records = self._mode1_visible_records(self._sorted_mode1(list(store.values())))
         active_records = [r for r in sorted_records if _is_active_rec(r)]
         other_records = [r for r in sorted_records if not _is_active_rec(r)]
         rejected_records = [r for r in sorted_records if _is_rejected_rec(r)]

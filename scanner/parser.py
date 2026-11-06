@@ -128,6 +128,7 @@ def ensure_record_fields(record: Dict[str, Any]) -> Dict[str, Any]:
     record.setdefault('register_no', record.get('register_no', '') or '')
     record.setdefault('renewal_date', record.get('renewal_date', '') or '')
     record.setdefault('certificate_url', record.get('certificate_url', '') or '')
+    record.setdefault('print_url', record.get('print_url', '') or '')
     record.setdefault('registration_date', '')
     queue = record.get('queue_count')
     queue_text = to_english_digits(str(queue if queue is not None else '')).strip()
@@ -165,7 +166,7 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
     """
     out: Dict[str, Any] = {
         'title_fa': '', 'title_en': '', 'register_no': '',
-        'reg_date': '', 'renewal_date': '', 'certificate_url': '', 'workflow_url': '', 'queue_count': None,
+        'reg_date': '', 'renewal_date': '', 'certificate_url': '', 'print_url': '', 'workflow_url': '', 'steps_url': '', 'queue_count': None,
     }
     if not html:
         return out
@@ -190,7 +191,7 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
     for a in soup.find_all('a', href=True):
         href = str(a.get('href', '')).strip()
         label = a.get_text(' ', strip=True)
-        if 'DeclarationSummery' in href or 'گردش کار پرونده' in label:
+        if ('DeclarationSummery' in href or 'گردش کار پرونده' in label) and 'DID=' in href:
             out['workflow_url'] = urljoin(base_url, href)
             break
     # Labels and values may be separated by HTML tags and line breaks.
@@ -221,6 +222,13 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         blob = f"{href} {label}"
         if any(k in blob for k in ('گواهی', 'Certificate', 'certificate', 'PrintCertificate', 'Gavahi')):
             out['certificate_url'] = urljoin(base_url, href)
+            break
+    # لینک نسخه چاپی اظهارنامه برای دانلود مستقیم در جدول
+    for a in soup.find_all('a', href=True):
+        href = str(a.get('href', '')).strip()
+        label = a.get_text(' ', strip=True)
+        if 'DeclarationPrint' in href or 'نسخه چاپی اظهارنامه' in label:
+            out['print_url'] = urljoin(base_url, href)
             break
     # This is the number of people ahead, not an inferred one-based rank.
     queue_text = flat.replace('\u200c', ' ')
