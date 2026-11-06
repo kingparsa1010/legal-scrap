@@ -39,7 +39,7 @@ THIN_BORDER = Border(
 RECORD_HEADERS = [
     "ردیف", "شماره اظهارنامه", "نام علامت لاتین", "نام علامت فارسی",
     "وضعیت پرونده", "شماره ثبت", "تاریخ ثبت", "تاریخ تمدید",
-    "لینک دانلود گواهی ثبت"
+    "لینک دانلود گواهی ثبت", "نوبت"
 ]
 
 # کاراکترهای غیرمجاز XML (علت خطای all strings must be XML compatible)
@@ -86,9 +86,10 @@ def _add_record_sheet(wb, title: str, records: List[Dict[str, Any]]):
             _clean_xml(item.get('title_fa') or item.get('title', '')),
             _clean_xml(item.get('status', '')),
             _clean_xml(item.get('register_no', '')),
-            _clean_xml(item.get('registration_date', '') if 'ثبت قطعی شده' in str(item.get('status', '')) else (item.get('reg_date') or item.get('declaration_date', ''))),
+            _clean_xml(item.get('workflow_registration_date', '') if 'ثبت قطعی شده' in str(item.get('status', '')) else (item.get('reg_date') or item.get('declaration_date', ''))),
             _clean_xml(renewal_info(item)[2] if 'ثبت قطعی شده' in str(item.get('status', '')) else item.get('renewal_date', '')),
             cert_url or "—",
+            item.get("queue_count"),
         ]
         ws.append(row_data)
         row_num = ws.max_row

@@ -461,7 +461,8 @@ def open_detail_viewer(url: str, title: str = "مشاهده پرونده اظه�
     # ایجاد پنجره Edge WebView2 — آدرس پرونده مستقیم و بدون معطلی باز می‌شود
     window = webview.create_window(
         title=f"پرونده اظهارنامه — {title}",
-        url=url,
+        url=PORTAL_HOME_URL,
+        background_color="#ffffff",
         width=1200,
         height=820,
         resizable=True,

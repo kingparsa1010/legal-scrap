@@ -344,7 +344,7 @@ def status_category(status: str) -> str:
 
 
 def _is_active_rec(r: dict) -> bool:
-    return bool(r.get('is_active') or is_finally_registered(r.get('status', '')))
+    return is_finally_registered(r.get('list_status', r.get('status', '')))
 
 
 def _is_rejected_rec(r: dict) -> bool:
@@ -1763,7 +1763,7 @@ class TrademarkApp(QMainWindow):
         record_headers = [
             "ردیف", "شماره اظهارنامه", "نام علامت لاتین", "نام علامت فارسی",
             "وضعیت پرونده", "شماره ثبت", "تاریخ ثبت", "تاریخ تمدید",
-            "لینک دانلود گواهی ثبت"
+            "مشاهده گردش کار", "نوبت"
         ]
 
         # تب ۱: همه (به‌جز ثبت قطعی شده‌ها؛ هر وضعیت با رنگ مخصوص)
@@ -1829,6 +1829,20 @@ class TrademarkApp(QMainWindow):
         self.tabs_mode1.addTab(self.tab_rejected, "رد شده‌ها")
         self.tabs_mode1.setTabToolTip(2, "پرونده‌های رد شده / ابطال شده / منصرف شده")
 
+        self.tab_queue = QWidget()
+        queue_layout = QVBoxLayout(self.tab_queue)
+        queue_layout.setContentsMargins(10, 10, 10, 10)
+        queue_hint = QLabel("پرونده‌های دارای نوبت، از کمترین تعداد افراد قبل از شما به بیشترین.", self)
+        queue_hint.setWordWrap(True)
+        queue_hint.setObjectName("Hint")
+        queue_layout.addWidget(queue_hint)
+        self.table_queue = self.create_table(record_headers)
+        self.table_queue.setItemDelegateForColumn(8, ActionCellDelegate(self, self.table_queue))
+        self.table_queue.setMouseTracking(True)
+        self.table_queue.cellDoubleClicked.connect(self._on_table_queue_double_click)
+        queue_layout.addWidget(self.table_queue, stretch=1)
+        self.tabs_mode1.addTab(self.tab_queue, "نوبت")
+
         self.tabs_mode1.currentChanged.connect(
             lambda idx: self.auto_fit_table_columns(self._mode1_tables()[idx])
         )
@@ -1846,14 +1860,17 @@ class TrademarkApp(QMainWindow):
                 table.setRowHidden(row, bool(query) and query not in " ".join(values))
 
     def _mode1_tables(self):
-        return [self.table_all, self.table_active, self.table_rejected]
+        return [self.table_all, self.table_active, self.table_rejected, self.table_queue]
 
     def _apply_mode1_default_sort(self):
         """مرتب‌سازی پیش‌فرض جدول‌های حالت ۱ بر اساس «تاریخ ثبت» (ستون ۶)؛ پیش‌فرض: جدیدترین اول."""
         order = (Qt.SortOrder.AscendingOrder if self._mode1_sort == "oldest"
                  else Qt.SortOrder.DescendingOrder)
         for t in self._mode1_tables():
-            t.sortByColumn(6, order)
+            if t is self.table_queue:
+                t.sortByColumn(9, Qt.SortOrder.AscendingOrder)
+            else:
+                t.sortByColumn(6, order)
 
     def _renumber_rows(self, table: QTableWidget):
         """شماره‌گذاری مجدد ستون ردیف بعد از مرتب‌سازی (۱، ۲، ۳ ... از بالا)."""
@@ -2082,6 +2099,7 @@ class TrademarkApp(QMainWindow):
             self.tabs_mode1.setTabText(0, f"همه ({all_count})")
             self.tabs_mode1.setTabText(1, f"فقط ثبت قطعی شده ({self._active})")
             self.tabs_mode1.setTabText(2, f"رد شده‌ها ({self._rejected})")
+            self.tabs_mode1.setTabText(3, f"نوبت ({self.table_queue.rowCount()})")
             # وضعیت خالی بودن تب‌ها
             self.all_empty.setVisible(all_count == 0)
             if all_count == 0 and self._total > 0:
@@ -2127,6 +2145,7 @@ class TrademarkApp(QMainWindow):
         self.table_all.setRowCount(0)
         self.table_active.setRowCount(0)
         self.table_rejected.setRowCount(0)
+        self.table_queue.setRowCount(0)
 
     def _reset_mode2_tables(self):
         self.table_class5.setRowCount(0)
@@ -2423,6 +2442,9 @@ class TrademarkApp(QMainWindow):
         if _is_rejected_rec(r):
             self._rejected += 1
             self.add_to_table_rejected(r)
+        if r.get('queue_count') is not None and not _is_active_rec(r):
+            self.add_to_table_all(r, self.table_queue)
+            self.table_queue.sortByColumn(9, Qt.SortOrder.AscendingOrder)
         if refresh_stats:
             self._refresh_stats()
 
@@ -2602,6 +2624,18 @@ class TrademarkApp(QMainWindow):
             self._renewal_day = day
             self._load_data_store_table()
 
+    def _queue_item(self, record: dict):
+        count = record.get('queue_count')
+        if count is None:
+            item = NumericTableWidgetItem(-1, '')
+        else:
+            item = NumericTableWidgetItem(int(count))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        checked = record.get('queue_checked_at', '')
+        item.setToolTip('تعداد افراد قبل از شما در صف گردش کار پرونده' +
+                        (f'\nآخرین دریافت (UTC): {checked}' if checked else ''))
+        return item
+
     def _set_table_active_row_items(self, row: int, r: dict):
         r = ensure_record_fields(dict(r))
         title = r.get('title', '')
@@ -2609,19 +2643,20 @@ class TrademarkApp(QMainWindow):
         title_fa = r.get('title_fa') or title
         title_en = r.get('title_en', '')
         reg_no = r.get('register_no', '')
-        reg_date = r.get('registration_date', '')
+        reg_date = r.get('workflow_registration_date', '')
         renewal = r.get('renewal_date', '')
-        cert_url = r.get('certificate_url') or r.get('detail_url', '')
+        cert_url = r.get('workflow_url') or r.get('detail_url', '')
 
         self.table_active.setItem(row, 0, NumericTableWidgetItem(row + 1))
         self.table_active.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
         self.table_active.setItem(row, 2, QTableWidgetItem(str(title_en or "—")))
         self.table_active.setItem(row, 3, QTableWidgetItem(str(title_fa or "—")))
         self.table_active.setItem(row, 4, self._status_item(r.get('status', '')))
-        self.table_active.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
+        self.table_active.setItem(row, 5, QTableWidgetItem(str(reg_no or "")))
         self.table_active.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
         self.table_active.setItem(row, 7, QTableWidgetItem(renewal_info(r)[2]))
         self.table_active.setItem(row, 8, self._make_action_item(cert_url, title))
+        self.table_active.setItem(row, 9, self._queue_item(r))
 
     def _set_table_class5_row_items(self, row: int, r: dict):
         title = r.get('title', '')
@@ -2695,17 +2730,18 @@ class TrademarkApp(QMainWindow):
         reg_no = r.get('register_no', '')
         reg_date = r.get('reg_date') or r.get('declaration_date', '')
         renewal = r.get('renewal_date', '')
-        cert_url = r.get('certificate_url') or r.get('detail_url', '')
+        cert_url = r.get('workflow_url') or r.get('detail_url', '')
 
         tbl.setItem(row, 0, NumericTableWidgetItem(row + 1))
         tbl.setItem(row, 1, QTableWidgetItem(str(dec_no or "—")))
         tbl.setItem(row, 2, QTableWidgetItem(str(title_en or "—")))
         tbl.setItem(row, 3, QTableWidgetItem(str(title_fa or "—")))
         tbl.setItem(row, 4, self._status_item(r.get('status', '')))
-        tbl.setItem(row, 5, QTableWidgetItem(str(reg_no or "—")))
+        tbl.setItem(row, 5, QTableWidgetItem(str(reg_no or "")))
         tbl.setItem(row, 6, DateTableWidgetItem(str(reg_date or "")))
         tbl.setItem(row, 7, DateTableWidgetItem(str(renewal or "")))
         tbl.setItem(row, 8, self._make_action_item(cert_url, title))
+        tbl.setItem(row, 9, self._queue_item(r))
 
     def add_to_table_active(self, r: dict):
         sorting = self.table_active.isSortingEnabled()
@@ -2746,6 +2782,13 @@ class TrademarkApp(QMainWindow):
 
     def add_to_table_rejected(self, r: dict):
         self.add_to_table_all(r, self.table_rejected)
+
+    def _on_table_queue_double_click(self, row: int, col: int):
+        item = self.table_queue.item(row, 8)
+        if item:
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and data.get('url'):
+                self.open_in_webview(data['url'], data.get('title', ''))
 
     def _on_table_all_double_click(self, row: int, col: int):
         item = self.table_all.item(row, 8)
@@ -3127,6 +3170,11 @@ class TrademarkApp(QMainWindow):
                 for row, r in enumerate(recs):
                     self._set_table_all_row_items(row, r, tbl)
 
+            queue_records = [ensure_record_fields(dict(r)) for r in sorted_records]
+            queue_records = sorted((r for r in queue_records if r.get('queue_count') is not None and not _is_active_rec(r)), key=lambda r: r['queue_count'])
+            self.table_queue.setRowCount(len(queue_records))
+            for row, record in enumerate(queue_records):
+                self._set_table_all_row_items(row, record, self.table_queue)
             self.table_active.setRowCount(len(active_records))
             for row, r in enumerate(active_records):
                 self._set_table_active_row_items(row, r)

@@ -61,7 +61,8 @@ def is_finally_registered(status: str) -> bool:
     """وضعیت پرونده «ثبت قطعی شده» است؟ — مبنای تب ACTIVE ONLY."""
     if not status:
         return False
-    return 'ثبت قطعی شده' in status
+    value = re.sub(r'\s+', ' ', str(status).replace('\u200c', ' ')).strip(' .:؛')
+    return value == 'ثبت قطعی شده'
 
 
 _FA_RE = re.compile(r'[\u0600-\u06FF]')
@@ -93,8 +94,28 @@ def split_title_fa_en(title: str) -> tuple:
     return title_fa, title_en
 
 
+def valid_registration_date(value) -> str:
+    """Accept a complete numeric Jalali date, never a neighbouring label."""
+    text = to_english_digits(str(value or '')).strip()
+    if not re.fullmatch(r'[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}', text):
+        return ''
+    try:
+        import jdatetime
+        year, month, day = map(int, re.split(r'[/-]', text))
+        return jdatetime.date(year, month, day).strftime('%Y/%m/%d')
+    except (ValueError, TypeError):
+        return ''
+
+
+def valid_register_no(value) -> str:
+    text = to_english_digits(str(value or '')).strip()
+    return text if re.fullmatch(r'[0-9]+', text) else ''
+
+
 def ensure_record_fields(record: Dict[str, Any]) -> Dict[str, Any]:
     """تکمیل فیلدهای جدید جدول (سازگار با رکوردهای قدیمی ذخیره‌شده)."""
+    if record.get('list_status') is not None:
+        record['status'] = record['list_status']
     title = str(record.get('title', '') or '')
     fa = str(record.get('title_fa', '') or '').strip()
     en = str(record.get('title_en', '') or '').strip()
@@ -108,6 +129,22 @@ def ensure_record_fields(record: Dict[str, Any]) -> Dict[str, Any]:
     record.setdefault('renewal_date', record.get('renewal_date', '') or '')
     record.setdefault('certificate_url', record.get('certificate_url', '') or '')
     record.setdefault('registration_date', '')
+    queue = record.get('queue_count')
+    queue_text = to_english_digits(str(queue if queue is not None else '')).strip()
+    record['queue_count'] = int(queue_text) if re.fullmatch(r'[0-9]+', queue_text) else None
+    if is_finally_registered(record.get('status', '')):
+        record['queue_count'] = None
+    if 'list_status' not in record and record.get('workflow_status') and record.get('workflow_status_verified'):
+        record['status'] = record['workflow_status']
+    record['is_active'] = int(is_finally_registered(record.get('status', '')))
+    record['register_no'] = valid_register_no(record.get('register_no'))
+    record['registration_date'] = valid_registration_date(record.get('registration_date'))
+    record['workflow_registration_date'] = valid_registration_date(record.get('workflow_registration_date'))
+    # Clean contaminated persisted values before display, export or retry checks.
+    for key in ('reg_date', 'declaration_date', 'renewal_date'):
+        record[key] = valid_registration_date(record.get(key))
+    if record['registration_date']:
+        record['reg_date'] = record['registration_date']
     # تاریخ ثبت میل به reg_date / declaration_date
     if not record.get('reg_date') and record.get('declaration_date'):
         record['reg_date'] = record.get('declaration_date')
@@ -128,7 +165,7 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
     """
     out: Dict[str, Any] = {
         'title_fa': '', 'title_en': '', 'register_no': '',
-        'reg_date': '', 'renewal_date': '', 'certificate_url': '', 'workflow_url': '',
+        'reg_date': '', 'renewal_date': '', 'certificate_url': '', 'workflow_url': '', 'queue_count': None,
     }
     if not html:
         return out
@@ -185,6 +222,37 @@ def parse_declaration_detail(html: str, base_url: str = BASE_URL) -> Dict[str, A
         if any(k in blob for k in ('گواهی', 'Certificate', 'certificate', 'PrintCertificate', 'Gavahi')):
             out['certificate_url'] = urljoin(base_url, href)
             break
+    # This is the number of people ahead, not an inferred one-based rank.
+    queue_text = flat.replace('\u200c', ' ')
+    queue_match = re.search(
+        r'تعداد\s*([0-9][0-9,٬]*)\s*نفر\s*قبل\s*از\s*شما\s*(?:در\s*)?نوبت',
+        queue_text,
+    )
+    if queue_match:
+        out['queue_count'] = int(queue_match.group(1).replace(',', '').replace('٬', ''))
+    declaration_match = re.search(r'شماره\s*اظهارنامه\s*[:：]\s*([0-9]+)', flat)
+    out['workflow_declaration_no'] = declaration_match.group(1) if declaration_match else ''
+    for heading in soup.find_all(['h1', 'h2', 'h3', 'h4']):
+        heading_text = ' '.join(heading.get_text(' ', strip=True).split())
+        status_match = re.fullmatch(r'آخرین\s*وضعیت\s*[:：]\s*(.+)', heading_text)
+        if status_match:
+            out['workflow_status'] = status_match.group(1).strip()
+            break
+    formed = re.search(r'تاریخ\s*تشکیل\s*پرونده\s*[:：]\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})', flat)
+    out['formation_date'] = valid_registration_date(formed.group(1)) if formed else ''
+    # Read the value from the registration-date cell only, not a formation
+    # date or another date elsewhere on the workflow page.
+    out['workflow_registration_date'] = ''
+    for cell in soup.find_all(['td', 'dd']):
+        cell_text = to_english_digits(cell.get_text(' ', strip=True))
+        found = re.fullmatch(r'تاریخ\s*ثبت(?:\s*قطعی)?\s*[:：]\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})', cell_text)
+        if found:
+            out['workflow_registration_date'] = valid_registration_date(found.group(1))
+            break
+    # Numeric fields must never fall back to arbitrary text after a label.
+    out['register_no'] = valid_register_no(number.group(1) if number else '')
+    out['reg_date'] = valid_registration_date(date_match.group(1) if date_match else '')
+    out['renewal_date'] = valid_registration_date(out.get('renewal_date'))
     return out
 
 
@@ -361,6 +429,7 @@ def parse_declaration_page(html: str) -> List[Dict[str, Any]]:
             "declaration_date": reg_date,
             "reg_time": reg_time,
             "status": status,
+            "list_status": status,
             "image_url": image_url,
             "detail_url": detail_url,
             "is_rejected": 1 if is_rejected_status(status) else 0,

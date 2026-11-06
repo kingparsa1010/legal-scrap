@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jdatetime
 
 def renewal_info(record, today=None):
-    raw = str(record.get("registration_date") or "").strip()
+    raw = str(record.get("workflow_registration_date") or "").strip()
     if not raw:
         return "", None, "تاریخ ثبت نامشخص"
     try:
